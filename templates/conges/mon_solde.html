@@ -1,0 +1,111 @@
+{% extends 'conges/base.html' %}
+{% block title %}Mon solde{% endblock %}
+{% block page_title %}Mon solde de congés{% endblock %}
+
+{% block content %}
+<div class="solde-page">
+  <!-- Year Selector -->
+  <div class="year-selector">
+    {% for a in annees %}
+    <a href="?annee={{ a }}" class="year-btn {% if annee == a %}active{% endif %}">{{ a }}</a>
+    {% endfor %}
+  </div>
+
+  {% if soldes %}
+  <div class="solde-grid">
+    {% for solde in soldes %}
+    <div class="solde-card">
+      <div class="solde-card-header" style="background:{{ solde.type_conge.couleur }}">
+        <div class="solde-icon">
+          <i class="fas {{ solde.type_conge.icone }}"></i>
+        </div>
+        <div class="solde-type">{{ solde.type_conge.libelle }}</div>
+      </div>
+      <div class="solde-card-body">
+        <div class="solde-stats">
+          <div class="solde-stat">
+            <div class="ss-value">{{ solde.jours_acquis }}</div>
+            <div class="ss-label">Acquis</div>
+          </div>
+          <div class="solde-stat">
+            <div class="ss-value text-warning">{{ solde.jours_pris }}</div>
+            <div class="ss-label">Pris</div>
+          </div>
+          <div class="solde-stat">
+            <div class="ss-value text-success">{{ solde.jours_restants }}</div>
+            <div class="ss-label">Restants</div>
+          </div>
+          {% if solde.jours_reportes > 0 %}
+          <div class="solde-stat">
+            <div class="ss-value text-info">{{ solde.jours_reportes }}</div>
+            <div class="ss-label">Reportés</div>
+          </div>
+          {% endif %}
+        </div>
+        <div class="solde-progress-wrapper">
+          <div class="solde-progress">
+            <div class="solde-progress-fill"
+                 style="width:{{ solde.pourcentage_utilise }}%;background:{{ solde.type_conge.couleur }}">
+            </div>
+          </div>
+          <span class="solde-pct">{{ solde.pourcentage_utilise }}% utilisé</span>
+        </div>
+        {% if solde.jours_restants > 0 %}
+        <a href="/nouvelle-demande/" class="btn btn-outline btn-sm btn-full mt-3">
+          <i class="fas fa-plus"></i> Poser ce congé
+        </a>
+        {% else %}
+        <div class="solde-exhausted">
+          <i class="fas fa-exclamation-circle"></i> Solde épuisé
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <i class="fas fa-wallet"></i>
+    <h3>Aucun solde pour {{ annee }}</h3>
+    <p>Contactez le service RH pour initialiser vos soldes.</p>
+  </div>
+  {% endif %}
+
+  <!-- History -->
+  {% if demandes_approuvees %}
+  <div class="card mt-4">
+    <div class="card-header">
+      <h3><i class="fas fa-history"></i> Historique des congés pris ({{ annee }})</h3>
+    </div>
+    <div class="table-responsive">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Référence</th>
+            <th>Type</th>
+            <th>Début</th>
+            <th>Fin</th>
+            <th>Durée</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in demandes_approuvees %}
+          <tr>
+            <td class="text-mono text-sm">{{ d.reference }}</td>
+            <td>
+              <span class="type-badge" style="background:{{ d.type_conge.couleur }}20;color:{{ d.type_conge.couleur }}">
+                {{ d.type_conge.libelle }}
+              </span>
+            </td>
+            <td>{{ d.date_debut|date:"d/m/Y" }}</td>
+            <td>{{ d.date_fin|date:"d/m/Y" }}</td>
+            <td>{{ d.nombre_jours }} j</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

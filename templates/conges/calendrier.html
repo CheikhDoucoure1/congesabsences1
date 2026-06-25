@@ -1,0 +1,121 @@
+{% extends 'conges/base.html' %}
+{% block title %}Calendrier{% endblock %}
+{% block page_title %}Calendrier des congés{% endblock %}
+
+{% block content %}
+<div class="calendar-page">
+  <!-- Navigation -->
+  <div class="calendar-nav card">
+    <a href="?mois={{ mois_precedent }}&annee={{ annee_precedent }}" class="btn btn-outline btn-sm">
+      <i class="fas fa-chevron-left"></i>
+    </a>
+    <h2 class="calendar-month-title">{{ mois_nom }} {{ annee }}</h2>
+    <a href="?mois={{ mois_suivant }}&annee={{ annee_suivant }}" class="btn btn-outline btn-sm">
+      <i class="fas fa-chevron-right"></i>
+    </a>
+    <a href="?mois={{ today.month }}&annee={{ today.year }}" class="btn btn-outline btn-sm ml-2">
+      Aujourd'hui
+    </a>
+  </div>
+
+  <!-- Calendar Grid -->
+  <div class="card calendar-card">
+    <div class="calendar-grid" id="calendarGrid">
+      <!-- Header: day names -->
+      <div class="cal-day-header">Lun</div>
+      <div class="cal-day-header">Mar</div>
+      <div class="cal-day-header">Mer</div>
+      <div class="cal-day-header">Jeu</div>
+      <div class="cal-day-header">Ven</div>
+      <div class="cal-day-header cal-weekend">Sam</div>
+      <div class="cal-day-header cal-weekend">Dim</div>
+    </div>
+    <div id="calendarDays" class="calendar-days-grid"></div>
+  </div>
+
+  <!-- Legend -->
+  <div class="calendar-legend card" id="calendarLegend"></div>
+</div>
+
+<div id="calendarTooltip" class="cal-tooltip hidden"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const EVENTS = {{ evenements_json|safe }};
+const FIRST_DAY = new Date('{{ premier_jour|date:"Y-m-d" }}');
+const LAST_DAY = new Date('{{ dernier_jour|date:"Y-m-d" }}');
+const TODAY_STR = '{{ today|date:"Y-m-d" }}';
+const YEAR = {{ annee }};
+const MONTH = {{ mois }};
+
+function buildCalendar() {
+  const grid = document.getElementById('calendarDays');
+  grid.innerHTML = '';
+
+  // First day of week (Monday = 0)
+  const firstWeekDay = (FIRST_DAY.getDay() + 6) % 7;
+
+  // Empty cells before first day
+  for (let i = 0; i < firstWeekDay; i++) {
+    const empty = document.createElement('div');
+    empty.className = 'cal-cell cal-empty';
+    grid.appendChild(empty);
+  }
+
+  const totalDays = LAST_DAY.getDate();
+  for (let day = 1; day <= totalDays; day++) {
+    const dateStr = `${YEAR}-${String(MONTH).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const cell = document.createElement('div');
+    const dayOfWeek = new Date(dateStr).getDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    const isToday = dateStr === TODAY_STR;
+
+    cell.className = `cal-cell${isWeekend ? ' cal-weekend' : ''}${isToday ? ' cal-today' : ''}`;
+    cell.innerHTML = `<span class="cal-day-num">${day}</span>`;
+
+    const dayEvents = EVENTS.filter(e => e.debut <= dateStr && e.fin >= dateStr);
+    dayEvents.slice(0, 3).forEach(ev => {
+      const evEl = document.createElement('div');
+      evEl.className = `cal-event${ev.est_moi ? ' cal-event-mine' : ''}`;
+      evEl.style.background = ev.couleur + (ev.est_moi ? '' : '80');
+      evEl.style.borderLeft = `3px solid ${ev.couleur}`;
+      evEl.textContent = ev.titre.split(' ')[0];
+      evEl.title = `${ev.titre} — ${ev.type} (${ev.jours} j)`;
+      cell.appendChild(evEl);
+    });
+    if (dayEvents.length > 3) {
+      const more = document.createElement('div');
+      more.className = 'cal-more';
+      more.textContent = `+${dayEvents.length - 3}`;
+      cell.appendChild(more);
+    }
+
+    grid.appendChild(cell);
+  }
+
+  buildLegend();
+}
+
+function buildLegend() {
+  const types = {};
+  EVENTS.forEach(e => {
+    if (!types[e.type]) types[e.type] = e.couleur;
+  });
+  const legend = document.getElementById('calendarLegend');
+  if (Object.keys(types).length === 0) {
+    legend.innerHTML = '<p class="text-muted text-sm text-center">Aucun congé approuvé ce mois-ci.</p>';
+    return;
+  }
+  legend.innerHTML = '<div class="legend-items">' +
+    Object.entries(types).map(([type, color]) =>
+      `<div class="legend-item">
+        <span class="legend-dot" style="background:${color}"></span>
+        <span>${type}</span>
+      </div>`
+    ).join('') + '</div>';
+}
+
+buildCalendar();
+</script>
+{% endblock %}

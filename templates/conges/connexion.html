@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connexion | PETROSEN - Congés & Absences</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="login-body">
+
+<div class="login-page">
+  <div class="login-left">
+    <div class="login-brand">
+      <div class="brand-logo">
+        <span class="brand-letter">P</span>
+      </div>
+      <div class="brand-text">
+        <h1>PETROSEN</h1>
+        <p>Société des Pétroles du Sénégal</p>
+      </div>
+    </div>
+    <div class="login-tagline">
+      <h2>Gestion des Congés<br>& Absences</h2>
+      <p>Gérez vos demandes de congé facilement et suivez vos soldes en temps réel.</p>
+    </div>
+    <div class="login-features">
+      <div class="feature-item">
+        <i class="fas fa-paper-plane"></i>
+        <span>Soumission en ligne</span>
+      </div>
+      <div class="feature-item">
+        <i class="fas fa-clock"></i>
+        <span>Suivi en temps réel</span>
+      </div>
+      <div class="feature-item">
+        <i class="fas fa-check-double"></i>
+        <span>Validation simplifiée</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="login-right">
+    <div class="login-card">
+      <div class="login-card-header">
+        <h2>Connexion</h2>
+        <p>Accédez à votre espace personnel</p>
+      </div>
+
+      {% if messages %}
+      {% for message in messages %}
+      <div class="alert alert-{{ message.tags }} mb-3">
+        <i class="fas fa-exclamation-circle"></i> {{ message }}
+      </div>
+      {% endfor %}
+      {% endif %}
+
+      <form method="post" action="/connexion/" id="loginForm">
+        {% csrf_token %}
+        <div class="form-group">
+          <label class="form-label">Adresse e-mail</label>
+          <div class="input-with-icon">
+            <i class="fas fa-envelope input-icon-left"></i>
+            <input type="email" name="email" class="form-control" placeholder="prenom.nom@petrosen.sn"
+                   required autofocus value="{{ request.POST.email }}">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Mot de passe</label>
+          <div class="input-with-icon">
+            <i class="fas fa-lock input-icon-left"></i>
+            <input type="password" name="password" id="passwordInput" class="form-control" placeholder="••••••••" required>
+            <button type="button" class="input-icon-right btn-icon" onclick="togglePwd()">
+              <i class="fas fa-eye" id="eyeIcon"></i>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-full btn-lg">
+          <i class="fas fa-sign-in-alt"></i> Se connecter
+        </button>
+      </form>
+
+      <div class="demo-section">
+        <div class="demo-divider"><span>Comptes de démonstration</span></div>
+        <div class="demo-accounts">
+          <button class="demo-account-btn" onclick="fillLogin('admin@petrosen.sn','admin123')">
+            <i class="fas fa-shield-alt"></i>
+            <span>Admin</span>
+          </button>
+          <button class="demo-account-btn" onclick="fillLogin('drh@petrosen.sn','password')">
+            <i class="fas fa-user-tie"></i>
+            <span>DRH</span>
+          </button>
+          <button class="demo-account-btn" onclick="fillLogin('manager@petrosen.sn','password')">
+            <i class="fas fa-users-cog"></i>
+            <span>Manager</span>
+          </button>
+          <button class="demo-account-btn" onclick="fillLogin('employe@petrosen.sn','password')">
+            <i class="fas fa-user"></i>
+            <span>Employé</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <p class="login-footer-text">© 2025 PETROSEN · Gestion RH</p>
+  </div>
+</div>
+
+<script>
+function togglePwd() {
+  const inp = document.getElementById('passwordInput');
+  const ico = document.getElementById('eyeIcon');
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    ico.className = 'fas fa-eye-slash';
+  } else {
+    inp.type = 'password';
+    ico.className = 'fas fa-eye';
+  }
+}
+function fillLogin(email, pwd) {
+  document.querySelector('input[name="email"]').value = email;
+  document.getElementById('passwordInput').value = pwd;
+  document.getElementById('loginForm').submit();
+}
+</script>
+</body>
+</html>

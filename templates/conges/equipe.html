@@ -1,0 +1,77 @@
+{% extends 'conges/base.html' %}
+{% block title %}Mon équipe{% endblock %}
+{% block page_title %}Mon équipe{% endblock %}
+
+{% block content %}
+<div class="team-page">
+  {% if absents_aujourd_hui %}
+  <div class="alert alert-info">
+    <i class="fas fa-user-clock"></i>
+    <strong>{{ absents_aujourd_hui|length }} personne(s)</strong> absente(s) aujourd'hui.
+  </div>
+  {% endif %}
+
+  <div class="team-grid">
+    {% for emp in employes %}
+    <div class="team-card {% for a in absents_aujourd_hui %}{% if a.employe_id == emp.id %}team-card-absent{% endif %}{% endfor %}">
+      <div class="team-card-header">
+        <div class="team-avatar">{{ emp.initiales }}</div>
+        <div class="team-info">
+          <h4>{{ emp.get_full_name }}</h4>
+          <p class="text-muted text-sm">{{ emp.poste|default:"—" }}</p>
+          <p class="text-muted text-sm"><i class="fas fa-building"></i> {{ emp.departement|default:"—" }}</p>
+        </div>
+        {% for a in absents_aujourd_hui %}
+        {% if a.employe_id == emp.id %}
+        <span class="absent-badge">Absent</span>
+        {% endif %}
+        {% endfor %}
+      </div>
+      <div class="team-card-footer">
+        <span class="badge badge-{{ emp.get_role_display|lower }}">{{ emp.get_role_display }}</span>
+        <span class="text-muted text-sm">{{ emp.email }}</span>
+      </div>
+    </div>
+    {% empty %}
+    <div class="empty-state">
+      <i class="fas fa-users"></i>
+      <h3>Aucun membre dans votre équipe</h3>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if absents_aujourd_hui %}
+  <div class="card mt-4">
+    <div class="card-header">
+      <h3><i class="fas fa-calendar-day"></i> Absences du jour</h3>
+    </div>
+    <div class="table-responsive">
+      <table class="table">
+        <thead>
+          <tr><th>Employé</th><th>Type</th><th>Retour prévu</th><th>Durée</th></tr>
+        </thead>
+        <tbody>
+          {% for a in absents_aujourd_hui %}
+          <tr>
+            <td>
+              <div class="employee-cell">
+                <div class="emp-avatar">{{ a.employe.initiales }}</div>
+                <span>{{ a.employe.get_full_name }}</span>
+              </div>
+            </td>
+            <td>
+              <span class="type-badge" style="background:{{ a.type_conge.couleur }}20;color:{{ a.type_conge.couleur }}">
+                {{ a.type_conge.libelle }}
+              </span>
+            </td>
+            <td>{{ a.date_fin|date:"d/m/Y" }}</td>
+            <td>{{ a.nombre_jours }} j</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

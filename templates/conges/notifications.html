@@ -1,0 +1,35 @@
+{% extends 'conges/base.html' %}
+{% block title %}Notifications{% endblock %}
+{% block page_title %}Notifications{% endblock %}
+
+{% block content %}
+<div class="notif-page">
+  <div class="card">
+    {% if notifs %}
+    <div class="notif-list-full">
+      {% for n in notifs %}
+      <div class="notif-item {% if not n.lue %}notif-unread{% endif %}">
+        <div class="notif-icon {% if 'approuvée' in n.titre %}notif-success{% elif 'rejetée' in n.titre %}notif-danger{% else %}notif-info{% endif %}">
+          <i class="fas {% if 'approuvée' in n.titre %}fa-check{% elif 'rejetée' in n.titre %}fa-times{% else %}fa-bell{% endif %}"></i>
+        </div>
+        <div class="notif-content">
+          <div class="notif-title">{{ n.titre }}</div>
+          <div class="notif-message">{{ n.message }}</div>
+          <div class="notif-time text-muted text-sm">{{ n.date_creation|date:"d/m/Y à H:i" }}</div>
+        </div>
+        {% if n.lien %}
+        <a href="{{ n.lien }}" class="btn btn-outline btn-sm">Voir</a>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <i class="fas fa-bell-slash"></i>
+      <h3>Aucune notification</h3>
+      <p>Vous n'avez pas encore de notifications.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

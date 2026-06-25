@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}Congés & Absences{% endblock %} | PETROSEN</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="/static/css/style.css">
+{% block extra_css %}{% endblock %}
+</head>
+<body>
+
+<div class="app-wrapper">
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <div class="logo-mark">P</div>
+        <div class="logo-text">
+          <span class="logo-company">PETROSEN</span>
+          <span class="logo-sub">Congés & Absences</span>
+        </div>
+      </div>
+      <button class="sidebar-close-btn" id="sidebarCloseBtn"><i class="fas fa-times"></i></button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section">
+        <span class="nav-section-label">Principal</span>
+        <a href="/" class="nav-item {% if request.resolver_match.url_name == 'tableau_de_bord' %}active{% endif %}">
+          <i class="fas fa-home nav-icon"></i>
+          <span>Tableau de bord</span>
+        </a>
+        <a href="/nouvelle-demande/" class="nav-item {% if request.resolver_match.url_name == 'nouvelle_demande' %}active{% endif %}">
+          <i class="fas fa-plus-circle nav-icon"></i>
+          <span>Nouvelle demande</span>
+        </a>
+        <a href="/mes-demandes/" class="nav-item {% if request.resolver_match.url_name == 'mes_demandes' %}active{% endif %}">
+          <i class="fas fa-list-check nav-icon"></i>
+          <span>Mes demandes</span>
+        </a>
+        <a href="/mon-solde/" class="nav-item {% if request.resolver_match.url_name == 'mon_solde' %}active{% endif %}">
+          <i class="fas fa-wallet nav-icon"></i>
+          <span>Mon solde</span>
+        </a>
+        <a href="/calendrier/" class="nav-item {% if request.resolver_match.url_name == 'calendrier' %}active{% endif %}">
+          <i class="fas fa-calendar-alt nav-icon"></i>
+          <span>Calendrier</span>
+        </a>
+      </div>
+
+      {% if request.user.is_manager_or_above %}
+      <div class="nav-section">
+        <span class="nav-section-label">Management</span>
+        <a href="/approbations/" class="nav-item {% if request.resolver_match.url_name == 'approbations' or request.resolver_match.url_name == 'detail_demande' %}active{% endif %}">
+          <i class="fas fa-check-circle nav-icon"></i>
+          <span>Approbations</span>
+          {% if notifications_non_lues > 0 %}
+          <span class="nav-badge">{{ notifications_non_lues }}</span>
+          {% endif %}
+        </a>
+        <a href="/equipe/" class="nav-item {% if request.resolver_match.url_name == 'equipe' %}active{% endif %}">
+          <i class="fas fa-users nav-icon"></i>
+          <span>Mon équipe</span>
+        </a>
+      </div>
+      {% endif %}
+
+      {% if request.user.role in 'rh,admin' %}
+      <div class="nav-section">
+        <span class="nav-section-label">Administration</span>
+        <a href="/administration/" class="nav-item {% if request.resolver_match.url_name == 'administration' %}active{% endif %}">
+          <i class="fas fa-cogs nav-icon"></i>
+          <span>Administration</span>
+        </a>
+      </div>
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="/profil/" class="sidebar-user">
+        {% if request.user.avatar %}
+        <img src="{{ request.user.avatar.url }}" class="user-avatar" alt="">
+        {% else %}
+        <div class="user-avatar-initials">{{ request.user.initiales }}</div>
+        {% endif %}
+        <div class="user-details">
+          <span class="user-name">{{ request.user.get_full_name|default:request.user.username }}</span>
+          <span class="user-role">{{ request.user.get_role_display }}</span>
+        </div>
+      </a>
+      <a href="/deconnexion/" class="btn-logout" title="Déconnexion">
+        <i class="fas fa-sign-out-alt"></i>
+      </a>
+    </div>
+  </aside>
+
+  <!-- OVERLAY MOBILE -->
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- MAIN CONTENT -->
+  <div class="main-wrapper">
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger-btn" id="hamburgerBtn">
+          <i class="fas fa-bars"></i>
+        </button>
+        <h1 class="page-title">{% block page_title %}Tableau de bord{% endblock %}</h1>
+      </div>
+      <div class="topbar-right">
+        <a href="/notifications/" class="topbar-icon-btn" title="Notifications">
+          <i class="fas fa-bell"></i>
+          {% if notifications_non_lues > 0 %}
+          <span class="notif-dot">{{ notifications_non_lues }}</span>
+          {% endif %}
+        </a>
+        <a href="/profil/" class="topbar-user-btn">
+          {% if request.user.avatar %}
+          <img src="{{ request.user.avatar.url }}" class="topbar-avatar" alt="">
+          {% else %}
+          <div class="topbar-avatar-initials">{{ request.user.initiales }}</div>
+          {% endif %}
+          <span class="topbar-username d-none d-md-inline">{{ request.user.first_name|default:request.user.username }}</span>
+        </a>
+      </div>
+    </header>
+
+    <!-- MESSAGES FLASH -->
+    {% if messages %}
+    <div class="messages-container">
+      {% for message in messages %}
+      <div class="alert alert-{{ message.tags }} alert-dismissible">
+        <i class="fas {% if message.tags == 'success' %}fa-check-circle{% elif message.tags == 'error' %}fa-exclamation-circle{% else %}fa-info-circle{% endif %}"></i>
+        {{ message }}
+        <button class="alert-close" onclick="this.parentElement.remove()"><i class="fas fa-times"></i></button>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- PAGE CONTENT -->
+    <main class="page-content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,333 @@
+{% extends 'conges/base.html' %}
+{% block title %}Administration{% endblock %}
+{% block page_title %}Administration{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+  <div class="admin-tabs">
+    <a href="?onglet=employes" class="admin-tab {% if onglet == 'employes' %}active{% endif %}">
+      <i class="fas fa-users"></i> Employés
+    </a>
+    <a href="?onglet=types_conge" class="admin-tab {% if onglet == 'types_conge' %}active{% endif %}">
+      <i class="fas fa-tags"></i> Types de congé
+    </a>
+    <a href="?onglet=soldes" class="admin-tab {% if onglet == 'soldes' %}active{% endif %}">
+      <i class="fas fa-wallet"></i> Soldes
+    </a>
+  </div>
+
+  <!-- EMPLOYEES TAB -->
+  {% if onglet == 'employes' %}
+  <div class="admin-section">
+    <div class="section-actions">
+      <h3>Gestion des employés ({{ employes|length }})</h3>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <a href="{% url 'template_employes' %}" class="btn btn-outline btn-sm">
+          <i class="fas fa-file-excel"></i> Télécharger le modèle
+        </a>
+        <button class="btn btn-success btn-sm" onclick="document.getElementById('importEmpModal').classList.remove('hidden')">
+          <i class="fas fa-file-import"></i> Importer Excel
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('addEmpModal').classList.remove('hidden')">
+          <i class="fas fa-plus"></i> Ajouter un employé
+        </button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover">
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Email</th>
+              <th>Département</th>
+              <th>Poste</th>
+              <th>Rôle</th>
+              <th>Manager</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for emp in employes %}
+            <tr>
+              <td>
+                <div class="employee-cell">
+                  <div class="emp-avatar">{{ emp.initiales }}</div>
+                  <span>{{ emp.get_full_name }}</span>
+                </div>
+              </td>
+              <td class="text-sm text-muted">{{ emp.email }}</td>
+              <td>{{ emp.departement|default:"—" }}</td>
+              <td class="text-sm">{{ emp.poste|default:"—" }}</td>
+              <td><span class="badge badge-info">{{ emp.get_role_display }}</span></td>
+              <td class="text-sm text-muted">{{ emp.manager.get_full_name|default:"—" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- LEAVE TYPES TAB -->
+  {% if onglet == 'types_conge' %}
+  <div class="admin-section">
+    <div class="section-actions">
+      <h3>Types de congé</h3>
+      <button class="btn btn-primary btn-sm" onclick="document.getElementById('addTypeModal').classList.remove('hidden')">
+        <i class="fas fa-plus"></i> Ajouter un type
+      </button>
+    </div>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table">
+          <thead>
+            <tr><th>Libellé</th><th>Code</th><th>Jours max</th><th>Justificatif</th><th>Couleur</th><th>Actif</th></tr>
+          </thead>
+          <tbody>
+            {% for t in types_conge %}
+            <tr>
+              <td>
+                <span class="type-badge" style="background:{{ t.couleur }}20;color:{{ t.couleur }}">
+                  {{ t.libelle }}
+                </span>
+              </td>
+              <td class="text-mono text-sm">{{ t.code }}</td>
+              <td>{{ t.jours_max }} j</td>
+              <td>{% if t.necessite_justificatif %}<i class="fas fa-check text-success"></i>{% else %}<i class="fas fa-times text-muted"></i>{% endif %}</td>
+              <td>
+                <div class="color-preview" style="background:{{ t.couleur }}">{{ t.couleur }}</div>
+              </td>
+              <td>{% if t.actif %}<span class="badge badge-success">Actif</span>{% else %}<span class="badge badge-secondary">Inactif</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- SOLDES TAB -->
+  {% if onglet == 'soldes' %}
+  <div class="admin-section">
+    <div class="section-actions">
+      <h3>Initialisation des soldes</h3>
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <p>Initialisez les soldes de congé pour tous les employés actifs pour une année donnée.</p>
+        <form method="post" action="/administration/?onglet=soldes" class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="init_soldes">
+          <select name="annee" class="form-control" style="width:auto;display:inline-block">
+            <option>2025</option>
+            <option>2026</option>
+          </select>
+          <button type="submit" class="btn btn-primary ml-2">
+            <i class="fas fa-sync"></i> Initialiser les soldes
+          </button>
+        </form>
+        <p class="text-muted text-sm mt-2">
+          <i class="fas fa-info-circle"></i>
+          Les soldes existants ne seront pas écrasés. Seuls les nouveaux soldes manquants seront créés.
+        </p>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Import Excel Modal -->
+<div id="importEmpModal" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3><i class="fas fa-file-import"></i> Importer des employés via Excel</h3>
+      <button onclick="document.getElementById('importEmpModal').classList.add('hidden')" class="modal-close-btn">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <form method="post" action="{% url 'importer_employes' %}" enctype="multipart/form-data">
+      {% csrf_token %}
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label required">Fichier Excel (.xlsx)</label>
+          <div class="file-upload-area" id="importUploadArea" onclick="document.getElementById('fichierExcel').click()" style="cursor:pointer">
+            <input type="file" name="fichier_excel" id="fichierExcel" accept=".xlsx,.xls" class="file-input" style="display:none" onchange="showImportFile(this)">
+            <div class="file-upload-content" id="importUploadContent">
+              <i class="fas fa-cloud-upload-alt" style="font-size:2rem;color:#94a3b8"></i>
+              <p style="margin:.5rem 0 0">Cliquez pour choisir votre fichier Excel</p>
+              <small style="color:#94a3b8">.xlsx ou .xls</small>
+            </div>
+            <div class="file-selected hidden" id="importFileSelected">
+              <i class="fas fa-file-excel" style="color:#1B5E20"></i>
+              <span id="importFileName"></span>
+            </div>
+          </div>
+        </div>
+        <div class="confirm-notice" style="margin-top:1rem">
+          <i class="fas fa-info-circle"></i>
+          <p>Le fichier doit contenir les colonnes : <strong>Prenom, Nom, Email</strong> (obligatoires) + Matricule, Poste, Departement, Role, Manager, Mot de passe.<br>
+          Les employés existants (même email) seront mis à jour. Les nouveaux seront créés avec un solde annuel de 24 jours.</p>
+        </div>
+        <div style="margin-top:.75rem">
+          <a href="{% url 'template_employes' %}" class="text-sm" style="color:#2196F3">
+            <i class="fas fa-download"></i> Télécharger le modèle Excel
+          </a>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="document.getElementById('importEmpModal').classList.add('hidden')">Annuler</button>
+        <button type="submit" class="btn btn-success"><i class="fas fa-upload"></i> Lancer l'import</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add Employee Modal -->
+<div id="addEmpModal" class="modal-backdrop hidden">
+  <div class="modal-box modal-lg">
+    <div class="modal-header">
+      <h3><i class="fas fa-user-plus"></i> Ajouter un employé</h3>
+      <button onclick="document.getElementById('addEmpModal').classList.add('hidden')" class="modal-close-btn">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <form method="post" action="/administration/?onglet=employes">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add_employe">
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required">Prénom</label>
+            <input type="text" name="prenom" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Nom</label>
+            <input type="text" name="nom" class="form-control" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required">Email</label>
+            <input type="email" name="email" class="form-control" placeholder="prenom.nom@petrosen.sn" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Matricule</label>
+            <input type="text" name="matricule" class="form-control">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Poste</label>
+            <input type="text" name="poste" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Rôle</label>
+            <select name="role" class="form-control">
+              <option value="employe">Employé</option>
+              <option value="manager">Manager</option>
+              <option value="rh">Responsable RH</option>
+              <option value="admin">Administrateur</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Département</label>
+            <select name="departement" class="form-control">
+              <option value="">— Sélectionner —</option>
+              {% for d in departements %}<option value="{{ d.id }}">{{ d.nom }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Manager direct</label>
+            <select name="manager" class="form-control">
+              <option value="">— Aucun —</option>
+              {% for emp in employes %}
+              {% if emp.role in 'manager,rh,admin' %}
+              <option value="{{ emp.id }}">{{ emp.get_full_name }}</option>
+              {% endif %}
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Mot de passe initial</label>
+          <input type="text" name="password" class="form-control" value="Petrosen2025!" placeholder="Mot de passe temporaire">
+          <small class="text-muted">L'employé devra le changer à sa première connexion.</small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="document.getElementById('addEmpModal').classList.add('hidden')">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add Type Modal -->
+<div id="addTypeModal" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3><i class="fas fa-tag"></i> Nouveau type de congé</h3>
+      <button onclick="document.getElementById('addTypeModal').classList.add('hidden')" class="modal-close-btn">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <form method="post" action="/administration/?onglet=types_conge">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add_type_conge">
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required">Libellé</label>
+            <input type="text" name="libelle" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Code</label>
+            <input type="text" name="code" class="form-control" placeholder="ex: recuperation" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Jours maximum/an</label>
+            <input type="number" name="jours_max" class="form-control" value="30" min="1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Couleur</label>
+            <input type="color" name="couleur" class="form-control" value="#2196F3" style="height:42px">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" name="necessite_justificatif">
+            <span class="checkmark"></span>
+            Justificatif obligatoire
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea name="description" class="form-control" rows="3"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="document.getElementById('addTypeModal').classList.add('hidden')">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Créer</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function showImportFile(input) {
+  if (input.files[0]) {
+    document.getElementById('importUploadContent').classList.add('hidden');
+    document.getElementById('importFileSelected').classList.remove('hidden');
+    document.getElementById('importFileName').textContent = input.files[0].name;
+  }
+}
+</script>
+{% endblock %}

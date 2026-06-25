@@ -1,0 +1,148 @@
+{% extends 'conges/base.html' %}
+{% block title %}Approbations{% endblock %}
+{% block page_title %}Gestion des approbations{% endblock %}
+
+{% block content %}
+<div class="list-page">
+  <!-- Status Tabs -->
+  <div class="tabs-bar">
+    <a href="?statut=en_attente" class="tab {% if statut_filtre == 'en_attente' %}active{% endif %}">
+      <i class="fas fa-clock"></i> En attente
+      {% if stats.en_attente > 0 %}<span class="tab-badge">{{ stats.en_attente }}</span>{% endif %}
+    </a>
+    <a href="?statut=approuve" class="tab {% if statut_filtre == 'approuve' %}active{% endif %}">
+      <i class="fas fa-check-circle"></i> Approuvées
+    </a>
+    <a href="?statut=rejete" class="tab {% if statut_filtre == 'rejete' %}active{% endif %}">
+      <i class="fas fa-times-circle"></i> Rejetées
+    </a>
+    <a href="?statut=" class="tab {% if not statut_filtre %}active{% endif %}">
+      <i class="fas fa-list"></i> Toutes
+    </a>
+  </div>
+
+  <div class="card">
+    {% if demandes %}
+    <div class="table-responsive">
+      <table class="table table-hover">
+        <thead>
+          <tr>
+            <th>Employé</th>
+            <th>Référence</th>
+            <th>Type</th>
+            <th>Période</th>
+            <th>Durée</th>
+            <th>Soumise le</th>
+            <th>Statut</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in demandes %}
+          <tr>
+            <td>
+              <div class="employee-cell">
+                <div class="emp-avatar">{{ d.employe.initiales }}</div>
+                <div>
+                  <div class="emp-name">{{ d.employe.get_full_name }}</div>
+                  <div class="emp-dept text-muted text-sm">{{ d.employe.departement|default:"—" }}</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="text-mono text-sm">{{ d.reference }}</span></td>
+            <td>
+              <span class="type-badge" style="background:{{ d.type_conge.couleur }}20;color:{{ d.type_conge.couleur }}">
+                {{ d.type_conge.libelle }}
+              </span>
+            </td>
+            <td class="text-sm">
+              {{ d.date_debut|date:"d/m/Y" }}
+              {% if d.date_debut != d.date_fin %}<br><span class="text-muted">→ {{ d.date_fin|date:"d/m/Y" }}</span>{% endif %}
+            </td>
+            <td>{% if d.demi_journee %}½ j{% else %}{{ d.nombre_jours }} j{% endif %}</td>
+            <td class="text-sm text-muted">{{ d.date_soumission|date:"d/m/Y H:i" }}</td>
+            <td><span class="badge badge-{{ d.statut_css }}">{{ d.statut_label }}</span></td>
+            <td>
+              <div class="actions-btns">
+                <a href="/approbations/{{ d.id }}/" class="btn-icon-sm" title="Voir">
+                  <i class="fas fa-eye"></i>
+                </a>
+                {% if d.statut == 'en_attente' %}
+                <button class="btn-icon-sm btn-success-icon" title="Approuver"
+                        onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'approuver')">
+                  <i class="fas fa-check"></i>
+                </button>
+                <button class="btn-icon-sm btn-danger-icon" title="Rejeter"
+                        onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'rejeter')">
+                  <i class="fas fa-times"></i>
+                </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <i class="fas fa-inbox"></i>
+      <h3>Aucune demande</h3>
+      <p>Il n'y a pas de demandes{% if statut_filtre == 'en_attente' %} en attente{% endif %} pour le moment.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Traitement Modal -->
+<div id="traitementModal" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header" id="modalHeader">
+      <h3 id="modalTitle"></h3>
+      <button onclick="closeModal()" class="modal-close-btn"><i class="fas fa-times"></i></button>
+    </div>
+    <form method="post" id="traitementForm">
+      {% csrf_token %}
+      <input type="hidden" name="action" id="modalAction">
+      <div class="modal-body">
+        <p id="modalMessage"></p>
+        <div class="form-group">
+          <label class="form-label">Commentaire (optionnel)</label>
+          <textarea name="commentaire" class="form-control" rows="3"
+                    placeholder="Ajoutez un commentaire pour l'employé..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Annuler</button>
+        <button type="submit" class="btn" id="modalSubmitBtn"></button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function openTraitement(id, ref, action) {
+  const modal = document.getElementById('traitementModal');
+  const isApprove = action === 'approuver';
+  document.getElementById('modalTitle').innerHTML = isApprove
+    ? '<i class="fas fa-check-circle text-success"></i> Approuver la demande'
+    : '<i class="fas fa-times-circle text-danger"></i> Rejeter la demande';
+  document.getElementById('modalMessage').innerHTML =
+    `Demande <strong>${ref}</strong> — Confirmez votre décision.`;
+  document.getElementById('modalAction').value = action;
+  document.getElementById('traitementForm').action = `/approbations/${id}/traiter/`;
+  const btn = document.getElementById('modalSubmitBtn');
+  btn.textContent = isApprove ? 'Approuver' : 'Rejeter';
+  btn.className = isApprove ? 'btn btn-success' : 'btn btn-danger';
+  modal.classList.remove('hidden');
+}
+function closeModal() {
+  document.getElementById('traitementModal').classList.add('hidden');
+}
+document.getElementById('traitementModal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+</script>
+{% endblock %}

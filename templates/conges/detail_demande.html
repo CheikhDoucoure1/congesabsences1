@@ -1,0 +1,139 @@
+{% extends 'conges/base.html' %}
+{% block title %}Détail demande {{ demande.reference }}{% endblock %}
+{% block page_title %}Détail de la demande{% endblock %}
+
+{% block content %}
+<div class="detail-page">
+  <div class="detail-header">
+    <a href="{% if request.user.is_manager_or_above %}/approbations/{% else %}/mes-demandes/{% endif %}"
+       class="btn btn-outline btn-sm">
+      <i class="fas fa-arrow-left"></i> Retour
+    </a>
+    <span class="badge badge-lg badge-{{ demande.statut_css }}">{{ demande.statut_label }}</span>
+  </div>
+
+  <div class="detail-grid">
+    <div class="detail-main">
+      <div class="card">
+        <div class="card-header">
+          <h3>
+            <span class="text-mono">{{ demande.reference }}</span>
+            <span class="type-badge ml-2" style="background:{{ demande.type_conge.couleur }}20;color:{{ demande.type_conge.couleur }}">
+              {{ demande.type_conge.libelle }}
+            </span>
+          </h3>
+        </div>
+        <div class="card-body">
+          <div class="detail-fields">
+            <div class="detail-field">
+              <span class="field-label"><i class="fas fa-user"></i> Employé</span>
+              <span class="field-value">
+                <strong>{{ demande.employe.get_full_name }}</strong>
+                <span class="text-muted"> — {{ demande.employe.poste|default:"" }}</span>
+              </span>
+            </div>
+            <div class="detail-field">
+              <span class="field-label"><i class="fas fa-building"></i> Département</span>
+              <span class="field-value">{{ demande.employe.departement|default:"Non renseigné" }}</span>
+            </div>
+            <div class="detail-field">
+              <span class="field-label"><i class="fas fa-calendar-day"></i> Période</span>
+              <span class="field-value">
+                Du <strong>{{ demande.date_debut|date:"d F Y" }}</strong>
+                au <strong>{{ demande.date_fin|date:"d F Y" }}</strong>
+              </span>
+            </div>
+            <div class="detail-field">
+              <span class="field-label"><i class="fas fa-sun"></i> Durée</span>
+              <span class="field-value">
+                {% if demande.demi_journee %}
+                  ½ journée ({{ demande.get_periode_demi_journee_display }})
+                {% else %}
+                  <strong>{{ demande.nombre_jours }}</strong> jour(s) ouvré(s)
+                {% endif %}
+              </span>
+            </div>
+            <div class="detail-field detail-full">
+              <span class="field-label"><i class="fas fa-comment-alt"></i> Motif</span>
+              <span class="field-value">{{ demande.motif }}</span>
+            </div>
+            {% if demande.justificatif %}
+            <div class="detail-field detail-full">
+              <span class="field-label"><i class="fas fa-paperclip"></i> Justificatif</span>
+              <a href="{{ demande.justificatif.url }}" target="_blank" class="file-link-btn">
+                <i class="fas fa-file-download"></i> Télécharger le justificatif
+              </a>
+            </div>
+            {% endif %}
+            <div class="detail-field">
+              <span class="field-label"><i class="fas fa-clock"></i> Soumise le</span>
+              <span class="field-value">{{ demande.date_soumission|date:"d F Y à H:i" }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if demande.traite_par %}
+      <div class="card card-decision">
+        <div class="card-header">
+          <h3>
+            {% if demande.statut == 'approuve' %}
+            <i class="fas fa-check-circle text-success"></i> Décision : Approuvée
+            {% else %}
+            <i class="fas fa-times-circle text-danger"></i> Décision : Rejetée
+            {% endif %}
+          </h3>
+        </div>
+        <div class="card-body">
+          <div class="detail-fields">
+            <div class="detail-field">
+              <span class="field-label">Traitée par</span>
+              <span class="field-value">{{ demande.traite_par.get_full_name }}</span>
+            </div>
+            <div class="detail-field">
+              <span class="field-label">Le</span>
+              <span class="field-value">{{ demande.date_traitement|date:"d F Y à H:i" }}</span>
+            </div>
+            {% if demande.commentaire_traitement %}
+            <div class="detail-field detail-full">
+              <span class="field-label">Commentaire</span>
+              <span class="field-value">{{ demande.commentaire_traitement }}</span>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if request.user.is_manager_or_above and demande.statut == 'en_attente' %}
+    <div class="detail-sidebar">
+      <div class="card">
+        <div class="card-header"><h3>Décision</h3></div>
+        <div class="card-body">
+          <form method="post" action="/approbations/{{ demande.id }}/traiter/">
+            {% csrf_token %}
+            <input type="hidden" name="action" id="actionInput" value="approuver">
+            <div class="form-group">
+              <label class="form-label">Commentaire (optionnel)</label>
+              <textarea name="commentaire" class="form-control" rows="4"
+                        placeholder="Message pour l'employé..."></textarea>
+            </div>
+            <div class="decision-btns">
+              <button type="submit" class="btn btn-success btn-full"
+                      onclick="document.getElementById('actionInput').value='approuver'">
+                <i class="fas fa-check"></i> Approuver
+              </button>
+              <button type="submit" class="btn btn-danger btn-full"
+                      onclick="document.getElementById('actionInput').value='rejeter'">
+                <i class="fas fa-times"></i> Rejeter
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

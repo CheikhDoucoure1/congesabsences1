@@ -1,0 +1,453 @@
+{% extends 'conges/base.html' %}
+{% block title %}Nouvelle demande{% endblock %}
+{% block page_title %}Nouvelle demande de congé{% endblock %}
+
+{% block content %}
+<div class="form-page">
+  <div class="form-page-inner">
+
+    <!-- Step indicator -->
+    <div class="steps">
+      <div class="step active" id="step-ind-1">
+        <div class="step-num">1</div>
+        <span>Type de congé</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step" id="step-ind-2">
+        <div class="step-num">2</div>
+        <span>Dates & Durée</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step" id="step-ind-3">
+        <div class="step-num">3</div>
+        <span>Confirmation</span>
+      </div>
+    </div>
+
+    <form method="post" enctype="multipart/form-data" id="demandeForm">
+      {% csrf_token %}
+
+      <!-- STEP 1: Type Selection -->
+      <div class="form-step" id="step-1">
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-tag"></i> Choisissez le type de congé</h3>
+          </div>
+          <div class="card-body">
+            <div class="type-grid" id="typeGrid">
+              {% for type in types_conge %}
+              <label class="type-card" for="type_{{ type.id }}">
+                <input type="radio" name="type_conge" id="type_{{ type.id }}" value="{{ type.id }}"
+                       class="type-radio" data-necessitejustif="{{ type.necessite_justificatif|lower }}"
+                       data-typeid="{{ type.id }}" data-categorie="{{ type.categorie }}">
+                <div class="type-card-inner" style="--type-color: {{ type.couleur }}">
+                  <div class="type-icon">
+                    <i class="fas {{ type.icone }}"></i>
+                  </div>
+                  <div class="type-info">
+                    <span class="type-name">{{ type.libelle }}</span>
+                    <span class="type-max">Max {{ type.jours_max }} j/an</span>
+                    <span class="type-solde" id="solde_{{ type.id }}"></span>
+                  </div>
+                  {% if type.necessite_justificatif %}
+                  <span class="type-badge-justif">Justificatif requis</span>
+                  {% endif %}
+                </div>
+              </label>
+              {% endfor %}
+            </div>
+            <div id="type-error" class="field-error hidden">Veuillez sélectionner un type de congé.</div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <a href="/" class="btn btn-outline">Annuler</a>
+          <button type="button" class="btn btn-primary" onclick="goToStep(2)">
+            Suivant <i class="fas fa-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 2: Dates -->
+      <div class="form-step hidden" id="step-2">
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-calendar-alt"></i> Sélectionnez les dates</h3>
+          </div>
+          <div class="card-body">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label required">Date de début</label>
+                <input type="date" name="date_debut" id="dateDebut" class="form-control"
+                       min="{{ today }}" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label required">Date de fin</label>
+                <input type="date" name="date_fin" id="dateFin" class="form-control"
+                       min="{{ today }}" required>
+              </div>
+            </div>
+
+            <div class="form-group hidden" id="demiJourneeGroup">
+              <label class="form-label">Options</label>
+              <div class="checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" name="demi_journee" id="demiJournee" onchange="toggleDemiJournee()">
+                  <span class="checkmark"></span>
+                  Demi-journée uniquement
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group hidden" id="periodeGroup">
+              <label class="form-label">Période</label>
+              <div class="radio-group">
+                <label class="radio-label">
+                  <input type="radio" name="periode_demi_journee" value="matin" checked>
+                  <span>Matin</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="periode_demi_journee" value="apres_midi">
+                  <span>Après-midi</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Duration Preview -->
+            <div class="duration-preview" id="durationPreview">
+              <div class="duration-icon"><i class="fas fa-sun"></i></div>
+              <div class="duration-text">
+                <span class="duration-value" id="durationValue">0</span>
+                <span class="duration-label">jour(s) ouvré(s)</span>
+              </div>
+            </div>
+
+            <div class="form-group hidden" id="motifGroup">
+              <label class="form-label required" id="motifLabel">Motif de l'absence</label>
+              <textarea name="motif" id="motif" class="form-control" rows="4"
+                        placeholder="Décrivez brièvement la raison de votre absence..."></textarea>
+              <div class="char-count"><span id="motifCount">0</span>/500 caractères</div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="interimaire_search">
+                <i class="fas fa-user-clock"></i> Personne intérimaire
+              </label>
+              <div class="search-dropdown" id="interimaire_wrapper" style="position:relative">
+                <input type="text" id="interimaire_search" class="form-control"
+                       autocomplete="off" placeholder="Tapez un nom pour rechercher...">
+                <input type="hidden" name="interimaire" id="interimaire">
+                <div id="interimaire_list" style="display:none;position:absolute;z-index:999;width:100%;
+                     max-height:220px;overflow-y:auto;background:#fff;border:1px solid #d1d5db;
+                     border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);margin-top:2px">
+                </div>
+              </div>
+              <small class="form-hint">Employé(e) qui vous remplacera pendant votre absence</small>
+            </div>
+
+            <script>
+            (function(){
+              var employes = [
+                {% for emp in employes_liste %}
+                {id:"{{ emp.id }}", name:"{{ emp.get_full_name }}", poste:"{{ emp.poste|default:'' }}"},
+                {% endfor %}
+              ];
+              var input  = document.getElementById('interimaire_search');
+              var hidden = document.getElementById('interimaire');
+              var list   = document.getElementById('interimaire_list');
+
+              function renderList(items) {
+                list.innerHTML = '';
+                if (!items.length) {
+                  list.innerHTML = '<div style="padding:10px;color:#94a3b8;font-size:.875rem">Aucun résultat</div>';
+                }
+                items.forEach(function(e) {
+                  var div = document.createElement('div');
+                  div.style.cssText = 'padding:10px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:.9rem';
+                  div.innerHTML = '<strong>' + e.name + '</strong>' + (e.poste ? ' <span style="color:#64748b;font-size:.8rem">— ' + e.poste + '</span>' : '');
+                  div.addEventListener('mousedown', function(ev) { ev.preventDefault(); });
+                  div.addEventListener('click', function() {
+                    input.value  = e.name;
+                    hidden.value = e.id;
+                    list.style.display = 'none';
+                  });
+                  div.addEventListener('mouseover', function() { this.style.background='#f8fafc'; });
+                  div.addEventListener('mouseout',  function() { this.style.background=''; });
+                  list.appendChild(div);
+                });
+                list.style.display = 'block';
+              }
+
+              input.addEventListener('input', function() {
+                hidden.value = '';
+                var q = this.value.trim().toLowerCase();
+                if (!q) { list.style.display = 'none'; return; }
+                var filtered = employes.filter(function(e) {
+                  return e.name.toLowerCase().includes(q);
+                });
+                renderList(filtered.slice(0, 10));
+              });
+
+              input.addEventListener('focus', function() {
+                if (this.value.trim()) input.dispatchEvent(new Event('input'));
+              });
+
+              document.addEventListener('click', function(e) {
+                if (!document.getElementById('interimaire_wrapper').contains(e.target)) {
+                  list.style.display = 'none';
+                }
+              });
+            })();
+            </script>
+
+            <div class="form-group" id="justificatifGroup" style="display:none">
+              <label class="form-label required">
+                <i class="fas fa-paperclip"></i> Justificatif médical
+              </label>
+              <div class="file-upload-area" id="fileUploadArea">
+                <input type="file" name="justificatif" id="justificatif"
+                       accept=".pdf,.jpg,.jpeg,.png" class="file-input">
+                <div class="file-upload-content">
+                  <i class="fas fa-cloud-upload-alt"></i>
+                  <p>Glissez votre fichier ici ou <span class="file-link">cliquez pour parcourir</span></p>
+                  <small>PDF, JPG, PNG — Max 5 Mo</small>
+                </div>
+                <div class="file-selected hidden" id="fileSelected">
+                  <i class="fas fa-file-alt"></i>
+                  <span id="fileName"></span>
+                  <button type="button" onclick="clearFile()"><i class="fas fa-times"></i></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-outline" onclick="goToStep(1)">
+            <i class="fas fa-arrow-left"></i> Retour
+          </button>
+          <button type="button" class="btn btn-primary" onclick="goToStep(3)">
+            Suivant <i class="fas fa-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 3: Confirmation -->
+      <div class="form-step hidden" id="step-3">
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-check-circle"></i> Récapitulatif de votre demande</h3>
+          </div>
+          <div class="card-body">
+            <div class="recap-grid">
+              <div class="recap-item">
+                <span class="recap-label"><i class="fas fa-tag"></i> Type de congé</span>
+                <span class="recap-value" id="recapType">—</span>
+              </div>
+              <div class="recap-item">
+                <span class="recap-label"><i class="fas fa-calendar-day"></i> Date de début</span>
+                <span class="recap-value" id="recapDebut">—</span>
+              </div>
+              <div class="recap-item">
+                <span class="recap-label"><i class="fas fa-calendar-check"></i> Date de fin</span>
+                <span class="recap-value" id="recapFin">—</span>
+              </div>
+              <div class="recap-item">
+                <span class="recap-label"><i class="fas fa-sun"></i> Durée</span>
+                <span class="recap-value" id="recapDuree">—</span>
+              </div>
+              <div class="recap-item recap-full" id="recapMotifRow" style="display:none">
+                <span class="recap-label"><i class="fas fa-comment"></i> Motif</span>
+                <span class="recap-value" id="recapMotif">—</span>
+              </div>
+              <div class="recap-item recap-full">
+                <span class="recap-label"><i class="fas fa-user-clock"></i> Intérimaire</span>
+                <span class="recap-value" id="recapInterimaire">—</span>
+              </div>
+            </div>
+
+            <div class="confirm-notice">
+              <i class="fas fa-info-circle"></i>
+              <p>En soumettant cette demande, elle sera transmise à votre responsable pour validation.
+                 Vous serez notifié(e) dès qu'une décision sera prise.</p>
+            </div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-outline" onclick="goToStep(2)">
+            <i class="fas fa-arrow-left"></i> Retour
+          </button>
+          <button type="submit" class="btn btn-success" id="submitBtn">
+            <i class="fas fa-paper-plane"></i> Soumettre la demande
+          </button>
+        </div>
+      </div>
+
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const today = '{{ today }}';
+const SOLDES = {{ soldes_json|safe }};
+let currentStep = 1;
+
+// Show remaining balance on each type card
+document.querySelectorAll('.type-radio').forEach(function(radio) {
+  const typeId = radio.dataset.typeid;
+  const el = document.getElementById('solde_' + typeId);
+  if (el && SOLDES[typeId] !== undefined) {
+    const j = SOLDES[typeId];
+    el.textContent = 'Solde : ' + j + ' j restant(s)';
+    el.style.color = j > 0 ? '#10b981' : '#ef4444';
+    el.style.fontWeight = '600';
+    el.style.fontSize = '12px';
+  }
+});
+
+function goToStep(step) {
+  if (step === 2 && !validateStep1()) return;
+  if (step === 3 && !validateStep2()) return;
+  if (step === 3) fillRecap();
+
+  document.getElementById(`step-${currentStep}`).classList.add('hidden');
+  document.getElementById(`step-${step}`).classList.remove('hidden');
+  document.querySelectorAll('.step').forEach((el, i) => {
+    el.classList.toggle('active', i + 1 === step);
+    el.classList.toggle('done', i + 1 < step);
+  });
+  currentStep = step;
+  window.scrollTo(0, 0);
+}
+
+function validateStep1() {
+  const selected = document.querySelector('input[name="type_conge"]:checked');
+  if (!selected) {
+    document.getElementById('type-error').classList.remove('hidden');
+    return false;
+  }
+  document.getElementById('type-error').classList.add('hidden');
+  const needsJustif = selected.dataset.necessitejustif === 'true';
+  document.getElementById('justificatifGroup').style.display = needsJustif ? 'block' : 'none';
+  const isAbsence = selected.dataset.categorie === 'absence';
+  document.getElementById('motifGroup').classList.toggle('hidden', !isAbsence);
+  document.getElementById('motif').required = isAbsence;
+  document.getElementById('demiJourneeGroup').classList.toggle('hidden', !isAbsence);
+  if (!isAbsence) {
+    document.getElementById('demiJournee').checked = false;
+    toggleDemiJournee();
+  }
+  return true;
+}
+
+function validateStep2() {
+  const debut = document.getElementById('dateDebut').value;
+  const fin = document.getElementById('dateFin').value;
+  if (!debut || !fin) { alert('Veuillez renseigner les dates.'); return false; }
+  if (fin < debut) { alert('La date de fin doit être après la date de début.'); return false; }
+  const selected = document.querySelector('input[name="type_conge"]:checked');
+  const isAbsence = selected && selected.dataset.categorie === 'absence';
+  if (isAbsence && !document.getElementById('motif').value.trim()) {
+    alert('Le motif est requis pour une demande d\'absence.');
+    return false;
+  }
+  return true;
+}
+
+function fillRecap() {
+  const typeEl = document.querySelector('input[name="type_conge"]:checked');
+  const typeName = typeEl ? typeEl.closest('label').querySelector('.type-name').textContent : '—';
+  const debut = document.getElementById('dateDebut').value;
+  const fin = document.getElementById('dateFin').value;
+  const demi = document.getElementById('demiJournee').checked;
+  const duree = document.getElementById('durationValue').textContent;
+  const motif = document.getElementById('motif').value;
+
+  const interimNom = document.getElementById('interimaire_search').value.trim() || '—';
+  const isAbsence = typeEl && typeEl.dataset.categorie === 'absence';
+
+  document.getElementById('recapType').textContent = typeName;
+  document.getElementById('recapDebut').textContent = debut ? formatDateFr(debut) : '—';
+  document.getElementById('recapFin').textContent = fin ? formatDateFr(fin) : '—';
+  document.getElementById('recapDuree').textContent = demi ? '0.5 jour' : `${duree} jour(s)`;
+  document.getElementById('recapMotifRow').style.display = isAbsence ? '' : 'none';
+  document.getElementById('recapMotif').textContent = motif || '—';
+  document.getElementById('recapInterimaire').textContent = interimNom;
+}
+
+function formatDateFr(isoDate) {
+  const [y, m, d] = isoDate.split('-');
+  const mois = ['jan.','fév.','mar.','avr.','mai','jun.','jul.','aoû.','sep.','oct.','nov.','déc.'];
+  return `${d} ${mois[parseInt(m)-1]} ${y}`;
+}
+
+function toggleDemiJournee() {
+  const checked = document.getElementById('demiJournee').checked;
+  document.getElementById('periodeGroup').classList.toggle('hidden', !checked);
+  document.getElementById('dateFin').value = document.getElementById('dateDebut').value;
+  document.getElementById('dateFin').disabled = checked;
+  calcDuration();
+}
+
+function calcDuration() {
+  const debut = document.getElementById('dateDebut').value;
+  const fin = document.getElementById('dateFin').value;
+  const demi = document.getElementById('demiJournee').checked;
+  if (demi) { document.getElementById('durationValue').textContent = '0.5'; return; }
+  if (!debut || !fin || fin < debut) { document.getElementById('durationValue').textContent = '0'; return; }
+  let count = 0;
+  let current = new Date(debut);
+  const end = new Date(fin);
+  while (current <= end) {
+    if (current.getDay() !== 0 && current.getDay() !== 6) count++;
+    current.setDate(current.getDate() + 1);
+  }
+  document.getElementById('durationValue').textContent = count;
+}
+
+document.getElementById('dateDebut').addEventListener('change', function() {
+  if (document.getElementById('dateFin').value < this.value) {
+    document.getElementById('dateFin').value = this.value;
+  }
+  document.getElementById('dateFin').min = this.value;
+  calcDuration();
+});
+document.getElementById('dateFin').addEventListener('change', calcDuration);
+
+document.getElementById('motif').addEventListener('input', function() {
+  document.getElementById('motifCount').textContent = this.value.length;
+});
+
+// File upload
+const justifInput = document.getElementById('justificatif');
+if (justifInput) {
+  justifInput.addEventListener('change', function() {
+    if (this.files[0]) {
+      document.getElementById('fileSelected').classList.remove('hidden');
+      document.getElementById('fileUploadArea').querySelector('.file-upload-content').classList.add('hidden');
+      document.getElementById('fileName').textContent = this.files[0].name;
+    }
+  });
+}
+
+function clearFile() {
+  document.getElementById('justificatif').value = '';
+  document.getElementById('fileSelected').classList.add('hidden');
+  document.getElementById('fileUploadArea').querySelector('.file-upload-content').classList.remove('hidden');
+}
+
+// Type card selection visual
+document.querySelectorAll('.type-radio').forEach(radio => {
+  radio.addEventListener('change', function() {
+    document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
+    this.closest('label').classList.add('selected');
+  });
+});
+
+document.getElementById('demandeForm').addEventListener('submit', function() {
+  const btn = document.getElementById('submitBtn');
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Envoi en cours...';
+  btn.disabled = true;
+});
+</script>
+{% endblock %}

@@ -1,0 +1,181 @@
+{% extends 'conges/base.html' %}
+{% block title %}Tableau de bord{% endblock %}
+{% block page_title %}Tableau de bord{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+  <!-- Greeting -->
+  <div class="greeting-banner">
+    <div>
+      <h2>Bonjour, {{ request.user.first_name|default:request.user.username }} 👋</h2>
+      <p>{{ today|date:"l d F Y" }}</p>
+    </div>
+    <a href="/nouvelle-demande/" class="btn btn-primary">
+      <i class="fas fa-plus"></i> Nouvelle demande
+    </a>
+  </div>
+
+  <!-- Stats Cards -->
+  <div class="stats-grid">
+    <div class="stat-card stat-pending">
+      <div class="stat-icon"><i class="fas fa-clock"></i></div>
+      <div class="stat-info">
+        <div class="stat-value">{{ mes_demandes_en_attente }}</div>
+        <div class="stat-label">En attente</div>
+      </div>
+    </div>
+    <div class="stat-card stat-approved">
+      <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+      <div class="stat-info">
+        <div class="stat-value">{{ mes_demandes_approuvees }}</div>
+        <div class="stat-label">Approuvées cette année</div>
+      </div>
+    </div>
+    {% for solde in mes_soldes|slice:":2" %}
+    <div class="stat-card stat-balance">
+      <div class="stat-icon"><i class="{{ solde.type_conge.icone }} fas"></i></div>
+      <div class="stat-info">
+        <div class="stat-value">{{ solde.jours_restants }}<span class="stat-unit">j</span></div>
+        <div class="stat-label">{{ solde.type_conge.libelle }}</div>
+      </div>
+    </div>
+    {% endfor %}
+    {% if request.user.is_manager_or_above %}
+    <div class="stat-card stat-todo">
+      <div class="stat-icon"><i class="fas fa-tasks"></i></div>
+      <div class="stat-info">
+        <div class="stat-value">{{ a_approuver }}</div>
+        <div class="stat-label">À approuver</div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="dashboard-grid">
+    <!-- Recent Requests -->
+    <div class="card">
+      <div class="card-header">
+        <h3><i class="fas fa-history"></i> Mes dernières demandes</h3>
+        <a href="/mes-demandes/" class="link-sm">Voir tout</a>
+      </div>
+      <div class="card-body p-0">
+        {% if mes_demandes_recentes %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Référence</th>
+              <th>Type</th>
+              <th>Dates</th>
+              <th>Durée</th>
+              <th>Statut</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in mes_demandes_recentes %}
+            <tr>
+              <td><span class="text-mono text-sm">{{ d.reference }}</span></td>
+              <td>
+                <span class="type-badge" style="background:{{ d.type_conge.couleur }}20;color:{{ d.type_conge.couleur }}">
+                  {{ d.type_conge.libelle }}
+                </span>
+              </td>
+              <td class="text-sm text-muted">
+                {{ d.date_debut|date:"d/m/Y" }}
+                {% if d.date_debut != d.date_fin %} — {{ d.date_fin|date:"d/m/Y" }}{% endif %}
+              </td>
+              <td class="text-sm">{{ d.nombre_jours }} j</td>
+              <td><span class="badge badge-{{ d.statut_css }}">{{ d.statut_label }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+          <i class="fas fa-inbox"></i>
+          <p>Aucune demande soumise</p>
+          <a href="/nouvelle-demande/" class="btn btn-primary btn-sm">Faire une demande</a>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Right Column -->
+    <div class="dashboard-right">
+      <!-- Quick Actions -->
+      <div class="card">
+        <div class="card-header">
+          <h3><i class="fas fa-bolt"></i> Actions rapides</h3>
+        </div>
+        <div class="quick-actions">
+          <a href="/nouvelle-demande/" class="quick-action">
+            <div class="qa-icon qa-blue"><i class="fas fa-paper-plane"></i></div>
+            <span>Nouvelle demande</span>
+          </a>
+          <a href="/mon-solde/" class="quick-action">
+            <div class="qa-icon qa-green"><i class="fas fa-wallet"></i></div>
+            <span>Mon solde</span>
+          </a>
+          <a href="/calendrier/" class="quick-action">
+            <div class="qa-icon qa-purple"><i class="fas fa-calendar"></i></div>
+            <span>Calendrier</span>
+          </a>
+          {% if request.user.is_manager_or_above %}
+          <a href="/approbations/" class="quick-action">
+            <div class="qa-icon qa-orange"><i class="fas fa-check-double"></i></div>
+            <span>Approbations</span>
+          </a>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- My Balance Summary -->
+      {% if mes_soldes %}
+      <div class="card">
+        <div class="card-header">
+          <h3><i class="fas fa-chart-pie"></i> Mes soldes</h3>
+          <a href="/mon-solde/" class="link-sm">Détail</a>
+        </div>
+        <div class="card-body">
+          {% for solde in mes_soldes %}
+          <div class="balance-row">
+            <div class="balance-label">
+              <span class="balance-dot" style="background:{{ solde.type_conge.couleur }}"></span>
+              {{ solde.type_conge.libelle }}
+            </div>
+            <div class="balance-bar-wrapper">
+              <div class="balance-bar">
+                <div class="balance-fill" style="width:{{ solde.pourcentage_utilise }}%;background:{{ solde.type_conge.couleur }}"></div>
+              </div>
+            </div>
+            <div class="balance-value">{{ solde.jours_restants }}/{{ solde.jours_acquis }}j</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Team Currently Out -->
+      {% if demandes_equipe %}
+      <div class="card">
+        <div class="card-header">
+          <h3><i class="fas fa-user-clock"></i> Absences en cours</h3>
+        </div>
+        <div class="card-body">
+          {% for d in demandes_equipe %}
+          <div class="absence-item">
+            <div class="absence-avatar" style="background:{{ d.type_conge.couleur }}20;color:{{ d.type_conge.couleur }}">
+              {{ d.employe.initiales }}
+            </div>
+            <div class="absence-info">
+              <span class="absence-name">{{ d.employe.get_full_name }}</span>
+              <span class="absence-type text-muted text-sm">{{ d.type_conge.libelle }} · jusqu'au {{ d.date_fin|date:"d/m" }}</span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

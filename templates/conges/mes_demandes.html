@@ -1,0 +1,142 @@
+{% extends 'conges/base.html' %}
+{% block title %}Mes demandes{% endblock %}
+{% block page_title %}Mes demandes{% endblock %}
+
+{% block content %}
+<div class="list-page">
+  <!-- Filters -->
+  <div class="filters-bar card">
+    <form method="get" class="filters-form" id="filtersForm">
+      <div class="filter-group">
+        <label class="filter-label">Statut</label>
+        <select name="statut" class="form-control form-control-sm" onchange="this.form.submit()">
+          <option value="">Tous</option>
+          <option value="en_attente" {% if statut_filtre == 'en_attente' %}selected{% endif %}>En attente</option>
+          <option value="approuve" {% if statut_filtre == 'approuve' %}selected{% endif %}>Approuvé</option>
+          <option value="rejete" {% if statut_filtre == 'rejete' %}selected{% endif %}>Rejeté</option>
+          <option value="annule" {% if statut_filtre == 'annule' %}selected{% endif %}>Annulé</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label">Type</label>
+        <select name="type" class="form-control form-control-sm" onchange="this.form.submit()">
+          <option value="">Tous</option>
+          {% for t in types_conge %}
+          <option value="{{ t.code }}" {% if type_filtre == t.code %}selected{% endif %}>{{ t.libelle }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label">Année</label>
+        <select name="annee" class="form-control form-control-sm" onchange="this.form.submit()">
+          {% for a in annees %}
+          <option value="{{ a }}" {% if annee_filtre == a|stringformat:"s" %}selected{% endif %}>{{ a }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <a href="/nouvelle-demande/" class="btn btn-primary btn-sm ml-auto">
+        <i class="fas fa-plus"></i> Nouvelle demande
+      </a>
+    </form>
+  </div>
+
+  <!-- Results count -->
+  <div class="results-info">
+    <span>{{ demandes|length }} demande{{ demandes|length|pluralize }}</span>
+  </div>
+
+  <!-- Table -->
+  <div class="card">
+    {% if demandes %}
+    <div class="table-responsive">
+      <table class="table table-hover">
+        <thead>
+          <tr>
+            <th>Référence</th>
+            <th>Type</th>
+            <th>Date début</th>
+            <th>Date fin</th>
+            <th>Durée</th>
+            <th>Statut</th>
+            <th>Soumise le</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in demandes %}
+          <tr>
+            <td><span class="text-mono">{{ d.reference }}</span></td>
+            <td>
+              <span class="type-badge" style="background:{{ d.type_conge.couleur }}20;color:{{ d.type_conge.couleur }}">
+                {{ d.type_conge.libelle }}
+              </span>
+            </td>
+            <td>{{ d.date_debut|date:"d/m/Y" }}</td>
+            <td>{{ d.date_fin|date:"d/m/Y" }}</td>
+            <td>
+              {% if d.demi_journee %}½ journée{% else %}{{ d.nombre_jours }} j{% endif %}
+            </td>
+            <td><span class="badge badge-{{ d.statut_css }}">{{ d.statut_label }}</span></td>
+            <td class="text-muted text-sm">{{ d.date_soumission|date:"d/m/Y" }}</td>
+            <td>
+              <div class="actions-btns">
+                <a href="/approbations/{{ d.id }}/" class="btn-icon-sm" title="Voir détails">
+                  <i class="fas fa-eye"></i>
+                </a>
+                {% if d.statut == 'en_attente' %}
+                <button class="btn-icon-sm btn-danger-icon" title="Annuler"
+                        onclick="confirmCancel('{{ d.reference }}', {{ d.id }})">
+                  <i class="fas fa-times"></i>
+                </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <i class="fas fa-inbox"></i>
+      <h3>Aucune demande trouvée</h3>
+      <p>Vous n'avez pas encore de demandes{% if statut_filtre %} avec ce statut{% endif %}.</p>
+      <a href="/nouvelle-demande/" class="btn btn-primary">Faire une demande</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Cancel Confirm Modal -->
+<div id="cancelModal" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3><i class="fas fa-exclamation-triangle text-warning"></i> Confirmer l'annulation</h3>
+    </div>
+    <div class="modal-body">
+      <p>Êtes-vous sûr(e) de vouloir annuler la demande <strong id="cancelRef"></strong> ?</p>
+      <p class="text-muted text-sm">Cette action est irréversible.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="document.getElementById('cancelModal').classList.add('hidden')">Non, garder</button>
+      <form method="post" id="cancelForm" style="display:inline">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">Oui, annuler</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function confirmCancel(ref, id) {
+  document.getElementById('cancelRef').textContent = ref;
+  document.getElementById('cancelForm').action = `/mes-demandes/${id}/annuler/`;
+  document.getElementById('cancelModal').classList.remove('hidden');
+}
+document.getElementById('cancelModal').addEventListener('click', function(e) {
+  if (e.target === this) this.classList.add('hidden');
+});
+</script>
+{% endblock %}
