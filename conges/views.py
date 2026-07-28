@@ -66,6 +66,8 @@ def tableau_de_bord(request):
             a_approuver = DemandeConge.objects.filter(
                 employe__in=equipe_ids, statut='en_attente'
             ).count()
+        elif user.role == 'dg':
+            a_approuver = DemandeConge.objects.filter(statut='validee').count()
         elif user.role in ('rh', 'admin'):
             a_approuver = DemandeConge.objects.filter(statut='en_attente').count()
 
@@ -193,6 +195,18 @@ def _notifier_manager(demande):
             titre=f"Nouvelle demande - {employe.get_full_name()}",
             message=f"Demande {demande.reference} : {demande.type_conge.libelle} "
                     f"({demande.nombre_jours} jour(s)).",
+            lien=f"/approbations/{demande.id}/",
+        )
+
+
+def _notifier_dg(demande):
+    for dg in Employe.objects.filter(role='dg', actif=True):
+        Notification.objects.create(
+            destinataire=dg,
+            titre="Demande en attente de votre validation",
+            message=f"Demande {demande.reference} de {demande.employe.get_full_name()} "
+                    f"({demande.type_conge.libelle}, {demande.nombre_jours} jour(s)) "
+                    f"a été validée par {demande.valide_par.get_full_name()} et attend votre validation finale.",
             lien=f"/approbations/{demande.id}/",
         )
 
@@ -343,32 +357,28 @@ def approbations(request):
         messages.error(request, "Accès non autorisé.")
         return redirect('tableau_de_bord')
 
-    statut_filtre = request.GET.get('statut', 'en_attente')
+    statut_filtre = request.GET.get('statut', 'validee' if user.is_dg else 'en_attente')
 
     if user.role == 'manager':
         equipe_ids = user.subordonnes.values_list('id', flat=True)
-        demandes = DemandeConge.objects.filter(
-            employe__in=equipe_ids
-        ).select_related('employe', 'type_conge', 'traite_par')
+        base_qs = DemandeConge.objects.filter(employe__in=equipe_ids)
     else:
-        demandes = DemandeConge.objects.all().select_related('employe', 'type_conge', 'traite_par')
+        base_qs = DemandeConge.objects.all()
 
+    demandes = base_qs.select_related('employe', 'type_conge', 'traite_par', 'valide_par')
     if statut_filtre:
         demandes = demandes.filter(statut=statut_filtre)
 
     stats = {
-        'en_attente': demandes.filter(statut='en_attente').count() if not statut_filtre else
-                      DemandeConge.objects.filter(statut='en_attente').count()
-                      if user.role in ('rh', 'admin') else
-                      DemandeConge.objects.filter(statut='en_attente', employe__in=user.subordonnes.all()).count(),
-        'approuve': 0,
-        'rejete': 0,
+        'en_attente': base_qs.filter(statut='en_attente').count(),
+        'validee': base_qs.filter(statut='validee').count(),
     }
 
     context = {
         'demandes': demandes,
         'statut_filtre': statut_filtre,
         'stats': stats,
+        'is_dg': user.is_dg,
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
     }
     return render(request, 'conges/approbations.html', context)
@@ -398,7 +408,7 @@ def traiter_demande(request, demande_id):
 
     demande = get_object_or_404(DemandeConge, id=demande_id)
 
-    if demande.statut != 'en_attente':
+    if demande.statut not in ('en_attente', 'validee'):
         messages.error(request, "Cette demande a déjà été traitée.")
         return redirect('approbations')
 
@@ -409,19 +419,39 @@ def traiter_demande(request, demande_id):
         messages.error(request, "Action invalide.")
         return redirect('approbations')
 
-    demande.statut = 'approuve' if action == 'approuver' else 'rejete'
-    demande.date_traitement = timezone.now()
-    demande.traite_par = user
-    demande.commentaire_traitement = commentaire
-    demande.save()
+    if not user.is_dg and demande.statut != 'en_attente':
+        messages.error(request, "Cette demande est en attente de la décision du DG.")
+        return redirect('approbations')
 
-    if action == 'approuver':
+    if action == 'rejeter':
+        demande.statut = 'rejete'
+        demande.date_traitement = timezone.now()
+        demande.traite_par = user
+        demande.commentaire_traitement = commentaire
+        demande.save()
+        _notifier_employe(demande, 'rejete', commentaire)
+        messages.success(request, f"La demande {demande.reference} a été rejetée.")
+        return redirect('approbations')
+
+    if user.is_dg:
+        demande.statut = 'approuve'
+        demande.date_traitement = timezone.now()
+        demande.traite_par = user
+        demande.commentaire_traitement = commentaire
+        demande.save()
         _mettre_a_jour_solde(demande)
+        _notifier_employe(demande, 'approuve', commentaire)
+        messages.success(request, f"La demande {demande.reference} a été définitivement approuvée.")
+    else:
+        demande.statut = 'validee'
+        demande.valide_par = user
+        demande.date_validation = timezone.now()
+        demande.commentaire_validation = commentaire
+        demande.save()
+        _notifier_dg(demande)
+        _notifier_employe(demande, 'validee', commentaire)
+        messages.success(request, f"La demande {demande.reference} a été validée et transmise au DG pour approbation finale.")
 
-    _notifier_employe(demande, action, commentaire)
-
-    msg = "approuvée" if action == 'approuver' else "rejetée"
-    messages.success(request, f"La demande {demande.reference} a été {msg}.")
     return redirect('approbations')
 
 
@@ -437,8 +467,13 @@ def _mettre_a_jour_solde(demande):
     solde.save()
 
 
-def _notifier_employe(demande, action, commentaire):
-    statut_label = "approuvée" if action == 'approuver' else "rejetée"
+def _notifier_employe(demande, statut, commentaire):
+    labels = {
+        'validee': "validée par votre manager, en attente de la validation finale du DG",
+        'approuve': "définitivement approuvée",
+        'rejete': "rejetée",
+    }
+    statut_label = labels.get(statut, statut)
     msg = f"Votre demande {demande.reference} ({demande.type_conge.libelle}) a été {statut_label}."
     if commentaire:
         msg += f" Commentaire : {commentaire}"

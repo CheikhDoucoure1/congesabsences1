@@ -10,6 +10,10 @@
       <i class="fas fa-clock"></i> En attente
       {% if stats.en_attente > 0 %}<span class="tab-badge">{{ stats.en_attente }}</span>{% endif %}
     </a>
+    <a href="?statut=validee" class="tab {% if statut_filtre == 'validee' %}active{% endif %}">
+      <i class="fas fa-user-tie"></i> Attente DG
+      {% if stats.validee > 0 %}<span class="tab-badge">{{ stats.validee }}</span>{% endif %}
+    </a>
     <a href="?statut=approuve" class="tab {% if statut_filtre == 'approuve' %}active{% endif %}">
       <i class="fas fa-check-circle"></i> Approuvées
     </a>
@@ -67,8 +71,17 @@
                 <a href="/approbations/{{ d.id }}/" class="btn-icon-sm" title="Voir">
                   <i class="fas fa-eye"></i>
                 </a>
-                {% if d.statut == 'en_attente' %}
-                <button class="btn-icon-sm btn-success-icon" title="Approuver"
+                {% if request.user.role == 'dg' and d.statut in 'en_attente,validee' %}
+                <button class="btn-icon-sm btn-success-icon" title="Approuver définitivement"
+                        onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'approuver')">
+                  <i class="fas fa-check"></i>
+                </button>
+                <button class="btn-icon-sm btn-danger-icon" title="Rejeter"
+                        onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'rejeter')">
+                  <i class="fas fa-times"></i>
+                </button>
+                {% elif request.user.role != 'dg' and d.statut == 'en_attente' %}
+                <button class="btn-icon-sm btn-success-icon" title="Valider (transmettre au DG)"
                         onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'approuver')">
                   <i class="fas fa-check"></i>
                 </button>
@@ -123,18 +136,20 @@
 
 {% block extra_js %}
 <script>
+const isDg = {{ is_dg|yesno:"true,false" }};
 function openTraitement(id, ref, action) {
   const modal = document.getElementById('traitementModal');
   const isApprove = action === 'approuver';
+  const approveLabel = isDg ? 'Approuver définitivement' : 'Valider et transmettre au DG';
   document.getElementById('modalTitle').innerHTML = isApprove
-    ? '<i class="fas fa-check-circle text-success"></i> Approuver la demande'
+    ? `<i class="fas fa-check-circle text-success"></i> ${approveLabel}`
     : '<i class="fas fa-times-circle text-danger"></i> Rejeter la demande';
   document.getElementById('modalMessage').innerHTML =
     `Demande <strong>${ref}</strong> — Confirmez votre décision.`;
   document.getElementById('modalAction').value = action;
   document.getElementById('traitementForm').action = `/approbations/${id}/traiter/`;
   const btn = document.getElementById('modalSubmitBtn');
-  btn.textContent = isApprove ? 'Approuver' : 'Rejeter';
+  btn.textContent = isApprove ? approveLabel : 'Rejeter';
   btn.className = isApprove ? 'btn btn-success' : 'btn btn-danger';
   modal.classList.remove('hidden');
 }

@@ -91,8 +91,11 @@ class Command(BaseCommand):
 
         admin = make_user('admin', 'admin@petrosen.sn', 'admin123',
                           'Système', 'Admin', 'admin', 'IT', 'Administrateur Système')
+        dg = make_user('dg', 'dg@petrosen.sn', 'password',
+                       'Cheikh', 'Diallo', 'dg', 'DG', 'Directeur Général')
         drh = make_user('drh', 'drh@petrosen.sn', 'password',
-                        'Aïssatou', 'Ndiaye', 'rh', 'DRH', 'Directrice des Ressources Humaines')
+                        'Aïssatou', 'Ndiaye', 'rh', 'DRH', 'Directrice des Ressources Humaines',
+                        manager=dg)
         manager = make_user('manager', 'manager@petrosen.sn', 'password',
                             'Ibrahim', 'Diop', 'manager', 'PROD',
                             'Chef de Département Production', manager=drh)
@@ -112,6 +115,7 @@ class Command(BaseCommand):
         self.stdout.write('Création des soldes de congé...')
         balance_data = {
             admin: {'annuel': (24,0), 'astreinte': (30, 0)},
+            dg: {'annuel': (24,2), 'astreinte': (30, 0)},
             drh: {'annuel': (24,5), 'astreinte': (30, 0)},
             manager: {'annuel': (24,8), 'astreinte': (30, 5)},
             employe: {'annuel': (24,12), 'astreinte': (30, 0)},
@@ -204,6 +208,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('\n✅ Données initialisées avec succès!\n'))
         self.stdout.write('Comptes de connexion :')
         self.stdout.write('  Admin    : admin@petrosen.sn / admin123')
+        self.stdout.write('  DG       : dg@petrosen.sn / password')
         self.stdout.write('  DRH      : drh@petrosen.sn / password')
         self.stdout.write('  Manager  : manager@petrosen.sn / password')
         self.stdout.write('  Employé  : employe@petrosen.sn / password')

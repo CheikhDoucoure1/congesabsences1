@@ -21,6 +21,7 @@ class Employe(AbstractUser):
         ('employe', 'Employé'),
         ('manager', 'Manager'),
         ('rh', 'Responsable RH'),
+        ('dg', 'Directeur Général'),
         ('admin', 'Administrateur'),
     ]
 
@@ -49,7 +50,11 @@ class Employe(AbstractUser):
 
     @property
     def is_manager_or_above(self):
-        return self.role in ('manager', 'rh', 'admin')
+        return self.role in ('manager', 'rh', 'dg', 'admin')
+
+    @property
+    def is_dg(self):
+        return self.role == 'dg'
 
     def get_solde(self, type_conge):
         try:
@@ -114,6 +119,7 @@ class SoldeConge(models.Model):
 class DemandeConge(models.Model):
     STATUT_CHOICES = [
         ('en_attente', 'En attente'),
+        ('validee', 'Validée - en attente du DG'),
         ('approuve', 'Approuvé'),
         ('rejete', 'Rejeté'),
         ('annule', 'Annulé'),
@@ -139,10 +145,18 @@ class DemandeConge(models.Model):
     justificatif = models.FileField(upload_to='justificatifs/', null=True, blank=True)
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='en_attente')
     date_soumission = models.DateTimeField(auto_now_add=True)
+    valide_par = models.ForeignKey(
+        Employe, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='demandes_validees',
+        help_text="Manager/RH ayant effectué la première validation."
+    )
+    date_validation = models.DateTimeField(null=True, blank=True)
+    commentaire_validation = models.TextField(blank=True)
     date_traitement = models.DateTimeField(null=True, blank=True)
     traite_par = models.ForeignKey(
         Employe, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='demandes_traitees'
+        related_name='demandes_traitees',
+        help_text="DG ayant approuvé/rejeté définitivement la demande, ou auteur du rejet."
     )
     commentaire_traitement = models.TextField(blank=True)
 
@@ -185,6 +199,7 @@ class DemandeConge(models.Model):
     def statut_css(self):
         return {
             'en_attente': 'warning',
+            'validee': 'info',
             'approuve': 'success',
             'rejete': 'danger',
             'annule': 'secondary',
