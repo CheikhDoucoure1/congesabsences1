@@ -7,9 +7,10 @@ from django.db.models import Q, Count
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 import json
 
-from .models import Employe, DemandeConge, TypeConge, SoldeConge, Notification, Departement
+from .models import Employe, DemandeConge, TypeConge, SoldeConge, Notification, Departement, Recrutement, Depart, CongeSupplementaire
 
 
 def connexion(request):
@@ -538,38 +539,48 @@ def administration(request):
             return _ajouter_type_conge(request)
         elif action == 'init_soldes':
             return _initialiser_soldes(request)
+        elif action == 'add_conge_supplementaire':
+            return _ajouter_conge_supplementaire(request)
 
     context = {
         'onglet': onglet,
         'employes': employes,
         'departements': departements,
         'types_conge': types_conge,
+        'conges_supplementaires': CongeSupplementaire.objects.select_related(
+            'employe', 'type_conge', 'accorde_par'
+        )[:50],
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
     }
     return render(request, 'conges/administration.html', context)
 
 
+def _creer_employe_depuis_post(request):
+    dept_id = request.POST.get('departement')
+    manager_id = request.POST.get('manager')
+    username = request.POST.get('email', '').split('@')[0]
+    emp = Employe.objects.create_user(
+        username=username,
+        email=request.POST.get('email'),
+        password=request.POST.get('password', 'Petrosen2025!'),
+        first_name=request.POST.get('prenom', ''),
+        last_name=request.POST.get('nom', ''),
+    )
+    emp.poste = request.POST.get('poste', '')
+    emp.role = request.POST.get('role', 'employe')
+    emp.matricule = request.POST.get('matricule', '')
+    if dept_id:
+        emp.departement_id = dept_id
+    if manager_id:
+        emp.manager_id = manager_id
+    emp.save()
+    _creer_soldes_employe(emp)
+    return emp
+
+
 def _ajouter_employe(request):
     try:
-        dept_id = request.POST.get('departement')
-        manager_id = request.POST.get('manager')
-        username = request.POST.get('email', '').split('@')[0]
-        emp = Employe.objects.create_user(
-            username=username,
-            email=request.POST.get('email'),
-            password=request.POST.get('password', 'Petrosen2025!'),
-            first_name=request.POST.get('prenom', ''),
-            last_name=request.POST.get('nom', ''),
-        )
-        emp.poste = request.POST.get('poste', '')
-        emp.role = request.POST.get('role', 'employe')
-        emp.matricule = request.POST.get('matricule', '')
-        if dept_id:
-            emp.departement_id = dept_id
-        if manager_id:
-            emp.manager_id = manager_id
-        emp.save()
-        _creer_soldes_employe(emp)
+        emp = _creer_employe_depuis_post(request)
         messages.success(request, f"L'employé {emp.get_full_name()} a été créé avec succès.")
     except Exception as e:
         messages.error(request, f"Erreur lors de la création : {e}")
@@ -615,6 +626,39 @@ def _initialiser_soldes(request):
             if created:
                 count += 1
     messages.success(request, f"{count} soldes initialisés pour {annee}.")
+    return redirect('/administration/?onglet=soldes')
+
+
+def _ajouter_conge_supplementaire(request):
+    try:
+        employe = Employe.objects.get(id=request.POST.get('employe'))
+        type_conge = TypeConge.objects.get(id=request.POST.get('type_conge'))
+        annee = int(request.POST.get('annee') or date.today().year)
+        try:
+            jours = Decimal(request.POST.get('nombre_jours', '').replace(',', '.'))
+        except InvalidOperation:
+            raise ValueError("Nombre de jours invalide.")
+        if jours <= 0:
+            raise ValueError("Le nombre de jours doit être positif.")
+        motif = request.POST.get('motif', '').strip()
+
+        CongeSupplementaire.objects.create(
+            employe=employe, type_conge=type_conge, annee=annee,
+            nombre_jours=jours, motif=motif, accorde_par=request.user,
+        )
+        solde, _ = SoldeConge.objects.get_or_create(
+            employe=employe, type_conge=type_conge, annee=annee,
+            defaults={'jours_acquis': type_conge.jours_max}
+        )
+        solde.jours_supplementaires += jours
+        solde.save()
+        messages.success(
+            request,
+            f"{jours} jour(s) supplémentaire(s) accordé(s) à {employe.get_full_name()} "
+            f"({type_conge.libelle}, {annee})."
+        )
+    except Exception as e:
+        messages.error(request, f"Erreur : {e}")
     return redirect('/administration/?onglet=soldes')
 
 
@@ -842,3 +886,128 @@ def profil(request):
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
     }
     return render(request, 'conges/profil.html', context)
+
+
+@login_required
+def recrutements(request):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_recrutement':
+        return _ajouter_recrutement(request)
+
+    filtre_statut = request.GET.get('statut', '')
+    embauches = Recrutement.objects.select_related('employe', 'employe__departement', 'responsable_rh')
+    if filtre_statut:
+        embauches = embauches.filter(statut=filtre_statut)
+
+    context = {
+        'embauches': embauches,
+        'employes': Employe.objects.order_by('last_name', 'first_name'),
+        'departements': Departement.objects.all(),
+        'filtre_statut': filtre_statut,
+        'notifications_non_lues': user.notifications.filter(lue=False).count(),
+    }
+    return render(request, 'conges/recrutements.html', context)
+
+
+def _ajouter_recrutement(request):
+    try:
+        date_embauche = date.fromisoformat(request.POST.get('date_embauche'))
+        if request.POST.get('mode_employe') == 'nouveau':
+            employe = _creer_employe_depuis_post(request)
+            employe.date_embauche = date_embauche
+            employe.save()
+        else:
+            employe = Employe.objects.get(id=request.POST.get('employe'))
+
+        periode_essai_fin = request.POST.get('periode_essai_fin')
+        Recrutement.objects.create(
+            employe=employe,
+            type_contrat=request.POST.get('type_contrat', 'cdi'),
+            source=request.POST.get('source', ''),
+            date_embauche=date_embauche,
+            periode_essai_fin=date.fromisoformat(periode_essai_fin) if periode_essai_fin else None,
+            responsable_rh=request.user,
+        )
+        messages.success(request, f"Recrutement de {employe.get_full_name()} enregistré avec succès.")
+    except Exception as e:
+        messages.error(request, f"Erreur lors de la création : {e}")
+    return redirect('recrutements')
+
+
+@login_required
+@require_POST
+def maj_recrutement(request, recrutement_id):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    embauche = get_object_or_404(Recrutement, id=recrutement_id)
+    embauche.statut = request.POST.get('statut', embauche.statut)
+    embauche.contrat_signe = request.POST.get('contrat_signe') == 'on'
+    embauche.visite_medicale_effectuee = request.POST.get('visite_medicale_effectuee') == 'on'
+    embauche.dossier_complet = request.POST.get('dossier_complet') == 'on'
+    embauche.notes = request.POST.get('notes', embauche.notes)
+    embauche.save()
+    messages.success(request, f"Le recrutement de {embauche.employe.get_full_name()} a été mis à jour.")
+    return redirect('recrutements')
+
+
+@login_required
+def departs(request):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_depart':
+        return _ajouter_depart(request)
+
+    liste_departs = Depart.objects.select_related('employe', 'employe__departement', 'traite_par')
+
+    context = {
+        'liste_departs': liste_departs,
+        'employes_actifs': Employe.objects.filter(actif=True).order_by('last_name', 'first_name'),
+        'notifications_non_lues': user.notifications.filter(lue=False).count(),
+    }
+    return render(request, 'conges/departs.html', context)
+
+
+def _ajouter_depart(request):
+    try:
+        Depart.objects.create(
+            employe_id=request.POST.get('employe'),
+            type_depart=request.POST.get('type_depart', 'demission'),
+            date_depart=date.fromisoformat(request.POST.get('date_depart')),
+            preavis_jours=request.POST.get('preavis_jours') or None,
+            motif=request.POST.get('motif', ''),
+            traite_par=request.user,
+        )
+        messages.success(request, "Départ enregistré avec succès.")
+    except Exception as e:
+        messages.error(request, f"Erreur lors de l'enregistrement : {e}")
+    return redirect('departs')
+
+
+@login_required
+@require_POST
+def maj_depart(request, depart_id):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    depart = get_object_or_404(Depart, id=depart_id)
+    depart.statut = request.POST.get('statut', depart.statut)
+    depart.entretien_sortie_effectue = request.POST.get('entretien_sortie_effectue') == 'on'
+    depart.solde_tout_compte_effectue = request.POST.get('solde_tout_compte_effectue') == 'on'
+    depart.materiel_restitue = request.POST.get('materiel_restitue') == 'on'
+    depart.commentaire = request.POST.get('commentaire', depart.commentaire)
+    depart.traite_par = request.user
+    depart.save()
+    messages.success(request, f"Le départ de {depart.employe.get_full_name()} a été mis à jour.")
+    return redirect('departs')

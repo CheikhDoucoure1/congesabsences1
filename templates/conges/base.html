@@ -71,6 +71,20 @@
 
       {% if request.user.role in 'rh,admin' %}
       <div class="nav-section">
+        <span class="nav-section-label">Ressources Humaines</span>
+        <a href="/recrutements/" class="nav-item {% if request.resolver_match.url_name == 'recrutements' or request.resolver_match.url_name == 'maj_recrutement' %}active{% endif %}">
+          <i class="fas fa-user-plus nav-icon"></i>
+          <span>Recrutements</span>
+        </a>
+        <a href="/departs/" class="nav-item {% if request.resolver_match.url_name == 'departs' or request.resolver_match.url_name == 'maj_depart' %}active{% endif %}">
+          <i class="fas fa-user-minus nav-icon"></i>
+          <span>Départs</span>
+        </a>
+      </div>
+      {% endif %}
+
+      {% if request.user.role in 'rh,admin' %}
+      <div class="nav-section">
         <span class="nav-section-label">Administration</span>
         <a href="/administration/" class="nav-item {% if request.resolver_match.url_name == 'administration' %}active{% endif %}">
           <i class="fas fa-cogs nav-icon"></i>

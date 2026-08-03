@@ -96,6 +96,7 @@ class SoldeConge(models.Model):
     jours_acquis = models.DecimalField(max_digits=6, decimal_places=1, default=0, validators=[MinValueValidator(0)])
     jours_pris = models.DecimalField(max_digits=6, decimal_places=1, default=0, validators=[MinValueValidator(0)])
     jours_reportes = models.DecimalField(max_digits=6, decimal_places=1, default=0, validators=[MinValueValidator(0)])
+    jours_supplementaires = models.DecimalField(max_digits=6, decimal_places=1, default=0, validators=[MinValueValidator(0)])
 
     class Meta:
         unique_together = ['employe', 'type_conge', 'annee']
@@ -106,14 +107,39 @@ class SoldeConge(models.Model):
 
     @property
     def jours_restants(self):
-        return self.jours_acquis + self.jours_reportes - self.jours_pris
+        return self.jours_acquis + self.jours_reportes + self.jours_supplementaires - self.jours_pris
 
     @property
     def pourcentage_utilise(self):
-        total = float(self.jours_acquis + self.jours_reportes)
+        total = float(self.jours_acquis + self.jours_reportes + self.jours_supplementaires)
         if total == 0:
             return 0
         return int((float(self.jours_pris) / total) * 100)
+
+
+def _annee_courante():
+    return date.today().year
+
+
+class CongeSupplementaire(models.Model):
+    employe = models.ForeignKey(Employe, on_delete=models.CASCADE, related_name='conges_supplementaires')
+    type_conge = models.ForeignKey(TypeConge, on_delete=models.CASCADE)
+    annee = models.PositiveIntegerField(default=_annee_courante)
+    nombre_jours = models.DecimalField(max_digits=5, decimal_places=1, validators=[MinValueValidator(0.5)])
+    motif = models.CharField(max_length=255, blank=True)
+    accorde_par = models.ForeignKey(
+        Employe, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='conges_supplementaires_accordes'
+    )
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Congé supplémentaire"
+        verbose_name_plural = "Congés supplémentaires"
+        ordering = ['-date_creation']
+
+    def __str__(self):
+        return f"{self.employe.get_full_name()} +{self.nombre_jours}j ({self.type_conge})"
 
 
 class DemandeConge(models.Model):
@@ -208,6 +234,110 @@ class DemandeConge(models.Model):
     @property
     def statut_label(self):
         return dict(self.STATUT_CHOICES).get(self.statut, '')
+
+
+class Recrutement(models.Model):
+    TYPE_CONTRAT_CHOICES = [
+        ('cdi', 'CDI'),
+        ('cdd', 'CDD'),
+        ('stage', 'Stage'),
+        ('consultant', 'Consultant'),
+    ]
+    SOURCE_CHOICES = [
+        ('candidature_spontanee', 'Candidature spontanée'),
+        ('cooptation', 'Cooptation'),
+        ('cabinet_recrutement', 'Cabinet de recrutement'),
+        ('site_emploi', "Site d'emploi"),
+        ('reseau_social', 'Réseau social'),
+        ('autre', 'Autre'),
+    ]
+    STATUT_CHOICES = [
+        ('essai', "Période d'essai"),
+        ('confirme', 'Confirmé'),
+        ('rompu', "Rompu pendant la période d'essai"),
+    ]
+
+    employe = models.ForeignKey(Employe, on_delete=models.CASCADE, related_name='recrutements')
+    type_contrat = models.CharField(max_length=20, choices=TYPE_CONTRAT_CHOICES, default='cdi')
+    source = models.CharField(max_length=30, choices=SOURCE_CHOICES, blank=True)
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='essai')
+    date_embauche = models.DateField(default=date.today)
+    periode_essai_fin = models.DateField(null=True, blank=True)
+    contrat_signe = models.BooleanField(default=False)
+    visite_medicale_effectuee = models.BooleanField(default=False)
+    dossier_complet = models.BooleanField(default=False)
+    notes = models.TextField(blank=True)
+    responsable_rh = models.ForeignKey(
+        Employe, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='recrutements_geres'
+    )
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Recrutement"
+        verbose_name_plural = "Recrutements"
+        ordering = ['-date_embauche']
+
+    def __str__(self):
+        return f"{self.employe.get_full_name()} ({self.get_statut_display()})"
+
+    @property
+    def statut_css(self):
+        return {
+            'essai': 'warning',
+            'confirme': 'success',
+            'rompu': 'danger',
+        }.get(self.statut, 'secondary')
+
+
+class Depart(models.Model):
+    TYPE_DEPART_CHOICES = [
+        ('demission', 'Démission'),
+        ('licenciement', 'Licenciement'),
+        ('fin_contrat', 'Fin de contrat'),
+        ('retraite', 'Retraite'),
+        ('rupture_conventionnelle', 'Rupture conventionnelle'),
+        ('deces', 'Décès'),
+        ('autre', 'Autre'),
+    ]
+    STATUT_CHOICES = [
+        ('planifie', 'Planifié'),
+        ('en_cours', 'En cours'),
+        ('finalise', 'Finalisé'),
+    ]
+
+    employe = models.ForeignKey(Employe, on_delete=models.CASCADE, related_name='departs')
+    type_depart = models.CharField(max_length=30, choices=TYPE_DEPART_CHOICES, default='demission')
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='planifie')
+    date_annonce = models.DateField(default=date.today)
+    date_depart = models.DateField(help_text="Dernier jour de travail effectif")
+    preavis_jours = models.PositiveIntegerField(null=True, blank=True)
+    motif = models.TextField(blank=True)
+    entretien_sortie_effectue = models.BooleanField(default=False)
+    solde_tout_compte_effectue = models.BooleanField(default=False)
+    materiel_restitue = models.BooleanField(default=False)
+    commentaire = models.TextField(blank=True)
+    traite_par = models.ForeignKey(
+        Employe, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='departs_traites'
+    )
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Départ"
+        verbose_name_plural = "Départs"
+        ordering = ['-date_depart']
+
+    def __str__(self):
+        return f"{self.employe.get_full_name()} - {self.get_type_depart_display()}"
+
+    @property
+    def statut_css(self):
+        return {
+            'planifie': 'info',
+            'en_cours': 'warning',
+            'finalise': 'secondary',
+        }.get(self.statut, 'secondary')
 
 
 class Notification(models.Model):
