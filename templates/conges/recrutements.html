@@ -1,0 +1,310 @@
+{% extends 'conges/base.html' %}
+{% block title %}Recrutements{% endblock %}
+{% block page_title %}Recrutements{% endblock %}
+
+{% block content %}
+<div class="list-page">
+  <div class="tabs-bar">
+    <a href="?statut=" class="tab {% if not filtre_statut %}active{% endif %}">
+      <i class="fas fa-list"></i> Tous
+    </a>
+    <a href="?statut=essai" class="tab {% if filtre_statut == 'essai' %}active{% endif %}">
+      <i class="fas fa-hourglass-half"></i> Période d'essai
+    </a>
+    <a href="?statut=confirme" class="tab {% if filtre_statut == 'confirme' %}active{% endif %}">
+      <i class="fas fa-check-circle"></i> Confirmé
+    </a>
+    <a href="?statut=rompu" class="tab {% if filtre_statut == 'rompu' %}active{% endif %}">
+      <i class="fas fa-times-circle"></i> Rompu
+    </a>
+  </div>
+
+  <div class="section-actions">
+    <h3>Employés recrutés ({{ embauches|length }})</h3>
+    <button class="btn btn-primary btn-sm" onclick="document.getElementById('addRecrutementModal').classList.remove('hidden')">
+      <i class="fas fa-user-plus"></i> Enregistrer un recrutement
+    </button>
+  </div>
+
+  <div class="card">
+    {% if embauches %}
+    <div class="table-responsive">
+      <table class="table table-hover">
+        <thead>
+          <tr>
+            <th>Employé</th>
+            <th>Département</th>
+            <th>Poste</th>
+            <th>Contrat</th>
+            <th>Source</th>
+            <th>Date d'embauche</th>
+            <th>Fin période d'essai</th>
+            <th>Statut</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in embauches %}
+          <tr>
+            <td>
+              <div class="employee-cell">
+                <div class="emp-avatar">{{ r.employe.initiales }}</div>
+                <span>{{ r.employe.get_full_name }}</span>
+              </div>
+            </td>
+            <td class="text-sm">{{ r.employe.departement|default:"—" }}</td>
+            <td class="text-sm">{{ r.employe.poste|default:"—" }}</td>
+            <td class="text-sm">{{ r.get_type_contrat_display }}</td>
+            <td class="text-sm text-muted">{{ r.get_source_display|default:"—" }}</td>
+            <td class="text-sm text-muted">{{ r.date_embauche|date:"d/m/Y" }}</td>
+            <td class="text-sm text-muted">{{ r.periode_essai_fin|date:"d/m/Y"|default:"—" }}</td>
+            <td><span class="badge badge-{{ r.statut_css }}">{{ r.get_statut_display }}</span></td>
+            <td>
+              <div class="actions-btns">
+                <button class="btn-icon-sm" title="Mettre à jour"
+                        onclick="openStatutRecrutement({{ r.id }}, '{{ r.employe.get_full_name|escapejs }}', '{{ r.statut }}', {{ r.contrat_signe|yesno:'true,false' }}, {{ r.visite_medicale_effectuee|yesno:'true,false' }}, {{ r.dossier_complet|yesno:'true,false' }}, '{{ r.notes|escapejs }}')">
+                  <i class="fas fa-edit"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <i class="fas fa-inbox"></i>
+      <h3>Aucun recrutement</h3>
+      <p>Il n'y a pas de recrutement{% if filtre_statut %} avec ce statut{% endif %} pour le moment.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Add Recrutement Modal -->
+<div id="addRecrutementModal" class="modal-backdrop hidden">
+  <div class="modal-box modal-lg">
+    <div class="modal-header">
+      <h3><i class="fas fa-user-plus"></i> Enregistrer un recrutement</h3>
+      <button onclick="document.getElementById('addRecrutementModal').classList.add('hidden')" class="modal-close-btn">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <form method="post" action="{% url 'recrutements' %}">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add_recrutement">
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Employé concerné</label>
+          <div style="display:flex;gap:1.5rem;margin-bottom:.75rem">
+            <label class="radio-label">
+              <input type="radio" name="mode_employe" value="existant" checked onchange="toggleModeEmploye()">
+              <span class="checkmark"></span> Employé existant
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="mode_employe" value="nouveau" onchange="toggleModeEmploye()">
+              <span class="checkmark"></span> Nouvel employé
+            </label>
+          </div>
+        </div>
+
+        <div id="blocEmployeExistant">
+          <div class="form-group">
+            <label class="form-label required">Employé</label>
+            <select name="employe" id="selectEmployeExistant" class="form-control" required>
+              <option value="">— Sélectionner —</option>
+              {% for emp in employes %}
+              <option value="{{ emp.id }}">{{ emp.get_full_name }} ({{ emp.departement|default:"—" }})</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div id="blocNouvelEmploye" class="hidden">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" id="labelNouveauPrenom">Prénom</label>
+              <input type="text" name="prenom" id="inputNouveauPrenom" class="form-control">
+            </div>
+            <div class="form-group">
+              <label class="form-label" id="labelNouveauNom">Nom</label>
+              <input type="text" name="nom" id="inputNouveauNom" class="form-control">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" id="labelNouveauEmail">Email</label>
+              <input type="email" name="email" id="inputNouveauEmail" class="form-control" placeholder="prenom.nom@petrosen.sn">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Matricule</label>
+              <input type="text" name="matricule" class="form-control">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Poste</label>
+              <input type="text" name="poste" class="form-control">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Rôle</label>
+              <select name="role" class="form-control">
+                <option value="employe">Employé</option>
+                <option value="manager">Manager</option>
+                <option value="rh">Responsable RH</option>
+                <option value="admin">Administrateur</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Département</label>
+              <select name="departement" class="form-control">
+                <option value="">— Sélectionner —</option>
+                {% for d in departements %}<option value="{{ d.id }}">{{ d.nom }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Manager direct</label>
+              <select name="manager" class="form-control">
+                <option value="">— Aucun —</option>
+                {% for emp in employes %}<option value="{{ emp.id }}">{{ emp.get_full_name }}</option>{% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Mot de passe initial</label>
+            <input type="text" name="password" class="form-control" value="Petrosen2025!" placeholder="Mot de passe temporaire">
+            <small class="text-muted">L'employé devra le changer à sa première connexion.</small>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Type de contrat</label>
+            <select name="type_contrat" class="form-control">
+              <option value="cdi">CDI</option>
+              <option value="cdd">CDD</option>
+              <option value="stage">Stage</option>
+              <option value="consultant">Consultant</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Source de recrutement</label>
+            <select name="source" class="form-control">
+              <option value="">— Non renseignée —</option>
+              <option value="candidature_spontanee">Candidature spontanée</option>
+              <option value="cooptation">Cooptation</option>
+              <option value="cabinet_recrutement">Cabinet de recrutement</option>
+              <option value="site_emploi">Site d'emploi</option>
+              <option value="reseau_social">Réseau social</option>
+              <option value="autre">Autre</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required">Date d'embauche</label>
+            <input type="date" name="date_embauche" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Fin de la période d'essai</label>
+            <input type="date" name="periode_essai_fin" class="form-control">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="document.getElementById('addRecrutementModal').classList.add('hidden')">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Update Statut Modal -->
+<div id="statutRecrutementModal" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 id="statutRecrutementTitle"><i class="fas fa-edit"></i> Mettre à jour le recrutement</h3>
+      <button onclick="closeStatutRecrutement()" class="modal-close-btn"><i class="fas fa-times"></i></button>
+    </div>
+    <form method="post" id="statutRecrutementForm">
+      {% csrf_token %}
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Statut</label>
+          <select name="statut" id="statutRecrutementStatut" class="form-control">
+            <option value="essai">Période d'essai</option>
+            <option value="confirme">Confirmé</option>
+            <option value="rompu">Rompu pendant la période d'essai</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" name="contrat_signe" id="statutRecrutementContrat">
+            <span class="checkmark"></span>
+            Contrat signé
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" name="visite_medicale_effectuee" id="statutRecrutementVisite">
+            <span class="checkmark"></span>
+            Visite médicale effectuée
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" name="dossier_complet" id="statutRecrutementDossier">
+            <span class="checkmark"></span>
+            Dossier administratif complet
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes</label>
+          <textarea name="notes" id="statutRecrutementNotes" class="form-control" rows="3"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="closeStatutRecrutement()">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleModeEmploye() {
+  const nouveau = document.querySelector('input[name="mode_employe"]:checked').value === 'nouveau';
+  document.getElementById('blocEmployeExistant').classList.toggle('hidden', nouveau);
+  document.getElementById('blocNouvelEmploye').classList.toggle('hidden', !nouveau);
+  document.getElementById('selectEmployeExistant').required = !nouveau;
+  document.getElementById('inputNouveauPrenom').required = nouveau;
+  document.getElementById('inputNouveauNom').required = nouveau;
+  document.getElementById('inputNouveauEmail').required = nouveau;
+  ['labelNouveauPrenom', 'labelNouveauNom', 'labelNouveauEmail'].forEach(function(id) {
+    document.getElementById(id).classList.toggle('required', nouveau);
+  });
+}
+
+function openStatutRecrutement(id, nom, statut, contratSigne, visiteMedicale, dossierComplet, notes) {
+  document.getElementById('statutRecrutementTitle').innerHTML = `<i class="fas fa-edit"></i> Mettre à jour — ${nom}`;
+  document.getElementById('statutRecrutementStatut').value = statut;
+  document.getElementById('statutRecrutementContrat').checked = contratSigne;
+  document.getElementById('statutRecrutementVisite').checked = visiteMedicale;
+  document.getElementById('statutRecrutementDossier').checked = dossierComplet;
+  document.getElementById('statutRecrutementNotes').value = notes;
+  document.getElementById('statutRecrutementForm').action = `/recrutements/${id}/statut/`;
+  document.getElementById('statutRecrutementModal').classList.remove('hidden');
+}
+function closeStatutRecrutement() {
+  document.getElementById('statutRecrutementModal').classList.add('hidden');
+}
+document.getElementById('statutRecrutementModal').addEventListener('click', function(e) {
+  if (e.target === this) closeStatutRecrutement();
+});
+</script>
+{% endblock %}

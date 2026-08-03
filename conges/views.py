@@ -7,9 +7,10 @@ from django.db.models import Q, Count
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 import json
 
-from .models import Employe, DemandeConge, TypeConge, SoldeConge, Notification, Departement
+from .models import Employe, DemandeConge, TypeConge, SoldeConge, Notification, Departement, Recrutement, Depart, CongeSupplementaire, HistoriqueModification
 
 
 def connexion(request):
@@ -69,7 +70,9 @@ def tableau_de_bord(request):
         elif user.role == 'dg':
             a_approuver = DemandeConge.objects.filter(statut='validee').count()
         elif user.role in ('rh', 'admin'):
-            a_approuver = DemandeConge.objects.filter(statut='en_attente').count()
+            a_approuver = DemandeConge.objects.filter(
+                statut__in=['en_attente', 'validee_manager']
+            ).count()
 
         demandes_equipe = DemandeConge.objects.filter(
             statut='approuve',
@@ -199,14 +202,27 @@ def _notifier_manager(demande):
         )
 
 
+def _notifier_rh(demande):
+    for rh in Employe.objects.filter(role__in=['rh', 'admin'], actif=True):
+        Notification.objects.create(
+            destinataire=rh,
+            titre="Demande en attente de votre validation",
+            message=f"Demande {demande.reference} de {demande.employe.get_full_name()} "
+                    f"({demande.type_conge.libelle}, {demande.nombre_jours} jour(s)) "
+                    f"a été validée par {demande.valide_par.get_full_name()} et attend votre validation.",
+            lien=f"/approbations/{demande.id}/",
+        )
+
+
 def _notifier_dg(demande):
+    validateur = demande.valide_par_rh or demande.valide_par
     for dg in Employe.objects.filter(role='dg', actif=True):
         Notification.objects.create(
             destinataire=dg,
             titre="Demande en attente de votre validation",
             message=f"Demande {demande.reference} de {demande.employe.get_full_name()} "
                     f"({demande.type_conge.libelle}, {demande.nombre_jours} jour(s)) "
-                    f"a été validée par {demande.valide_par.get_full_name()} et attend votre validation finale.",
+                    f"a été validée par {validateur.get_full_name()} et attend votre validation finale.",
             lien=f"/approbations/{demande.id}/",
         )
 
@@ -365,12 +381,13 @@ def approbations(request):
     else:
         base_qs = DemandeConge.objects.all()
 
-    demandes = base_qs.select_related('employe', 'type_conge', 'traite_par', 'valide_par')
+    demandes = base_qs.select_related('employe', 'type_conge', 'traite_par', 'valide_par', 'valide_par_rh')
     if statut_filtre:
         demandes = demandes.filter(statut=statut_filtre)
 
     stats = {
         'en_attente': base_qs.filter(statut='en_attente').count(),
+        'validee_manager': base_qs.filter(statut='validee_manager').count(),
         'validee': base_qs.filter(statut='validee').count(),
     }
 
@@ -379,6 +396,7 @@ def approbations(request):
         'statut_filtre': statut_filtre,
         'stats': stats,
         'is_dg': user.is_dg,
+        'is_rh': user.role in ('rh', 'admin'),
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
     }
     return render(request, 'conges/approbations.html', context)
@@ -400,6 +418,127 @@ def detail_demande(request, demande_id):
 
 
 @login_required
+def modifier_demande(request, demande_id):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    demande = get_object_or_404(DemandeConge, id=demande_id)
+
+    if demande.statut not in ('en_attente', 'validee_manager', 'validee'):
+        messages.error(request, "Cette demande a déjà été traitée et ne peut plus être modifiée.")
+        return redirect('detail_demande', demande_id=demande.id)
+
+    types_conge = TypeConge.objects.filter(actif=True)
+    employes_liste = Employe.objects.filter(actif=True).exclude(id=demande.employe_id).order_by('last_name', 'first_name')
+
+    if request.method == 'POST':
+        type_id = request.POST.get('type_conge')
+        date_debut_str = request.POST.get('date_debut')
+        date_fin_str = request.POST.get('date_fin')
+        demi_journee = request.POST.get('demi_journee') == 'on'
+        periode_demi_journee = request.POST.get('periode_demi_journee', '')
+        motif = request.POST.get('motif', '').strip()
+        justificatif = request.FILES.get('justificatif')
+        interimaire_id = request.POST.get('interimaire') or None
+        nombre_jours_str = request.POST.get('nombre_jours', '').strip()
+
+        errors = []
+        type_conge_obj = None
+        if not type_id:
+            errors.append("Veuillez sélectionner un type de congé.")
+        else:
+            try:
+                type_conge_obj = TypeConge.objects.get(id=type_id)
+            except TypeConge.DoesNotExist:
+                errors.append("Type de congé invalide.")
+
+        date_debut = date_fin = None
+        if not date_debut_str or not date_fin_str:
+            errors.append("Les dates de début et de fin sont requises.")
+        else:
+            try:
+                date_debut = date.fromisoformat(date_debut_str)
+                date_fin = date.fromisoformat(date_fin_str)
+                if date_debut > date_fin:
+                    errors.append("La date de début doit être avant la date de fin.")
+            except ValueError:
+                errors.append("Format de date invalide.")
+
+        if type_conge_obj and type_conge_obj.categorie == 'absence' and not motif:
+            errors.append("Le motif est requis pour une demande d'absence.")
+
+        nombre_jours = None
+        if nombre_jours_str:
+            try:
+                nombre_jours = Decimal(nombre_jours_str.replace(',', '.'))
+                if nombre_jours <= 0:
+                    errors.append("Le nombre de jours doit être positif.")
+            except InvalidOperation:
+                errors.append("Nombre de jours invalide.")
+
+        if not errors:
+            avant = {
+                'Type de congé': demande.type_conge.libelle,
+                'Date de début': demande.date_debut.strftime('%d/%m/%Y'),
+                'Date de fin': demande.date_fin.strftime('%d/%m/%Y'),
+                'Nombre de jours': str(demande.nombre_jours),
+                'Motif': demande.motif or '—',
+                'Intérimaire': demande.interimaire.get_full_name() if demande.interimaire else '—',
+            }
+
+            demande.type_conge = type_conge_obj
+            demande.date_debut = date_debut
+            demande.date_fin = date_fin
+            demande.demi_journee = demi_journee
+            demande.periode_demi_journee = periode_demi_journee if demi_journee else ''
+            demande.motif = motif
+            demande.interimaire_id = interimaire_id
+            if justificatif:
+                demande.justificatif = justificatif
+            demande.nombre_jours = nombre_jours if nombre_jours is not None else demande.calculer_jours()
+            demande.save()
+
+            apres = {
+                'Type de congé': demande.type_conge.libelle,
+                'Date de début': demande.date_debut.strftime('%d/%m/%Y'),
+                'Date de fin': demande.date_fin.strftime('%d/%m/%Y'),
+                'Nombre de jours': str(demande.nombre_jours),
+                'Motif': demande.motif or '—',
+                'Intérimaire': demande.interimaire.get_full_name() if demande.interimaire else '—',
+            }
+            changements = [
+                f"{champ} : « {avant[champ]} » → « {apres[champ]} »"
+                for champ in avant if avant[champ] != apres[champ]
+            ]
+            HistoriqueModification.objects.create(
+                type_action='demande_modifiee',
+                auteur=user,
+                employe_concerne=demande.employe,
+                demande=demande,
+                description=(
+                    f"Demande {demande.reference} de {demande.employe.get_full_name()} modifiée : "
+                    + ("; ".join(changements) if changements else "aucune valeur modifiée.")
+                ),
+            )
+
+            messages.success(request, f"La demande {demande.reference} a été modifiée avec succès.")
+            return redirect('detail_demande', demande_id=demande.id)
+
+        for err in errors:
+            messages.error(request, err)
+
+    context = {
+        'demande': demande,
+        'types_conge': types_conge,
+        'employes_liste': employes_liste,
+        'notifications_non_lues': user.notifications.filter(lue=False).count(),
+    }
+    return render(request, 'conges/modifier_demande.html', context)
+
+
+@login_required
 @require_POST
 def traiter_demande(request, demande_id):
     user = request.user
@@ -408,7 +547,7 @@ def traiter_demande(request, demande_id):
 
     demande = get_object_or_404(DemandeConge, id=demande_id)
 
-    if demande.statut not in ('en_attente', 'validee'):
+    if demande.statut not in ('en_attente', 'validee_manager', 'validee'):
         messages.error(request, "Cette demande a déjà été traitée.")
         return redirect('approbations')
 
@@ -419,9 +558,13 @@ def traiter_demande(request, demande_id):
         messages.error(request, "Action invalide.")
         return redirect('approbations')
 
-    if not user.is_dg and demande.statut != 'en_attente':
-        messages.error(request, "Cette demande est en attente de la décision du DG.")
-        return redirect('approbations')
+    if not user.is_dg:
+        if user.role == 'manager' and demande.statut != 'en_attente':
+            messages.error(request, "Cette demande n'est plus en attente de votre validation.")
+            return redirect('approbations')
+        if user.role in ('rh', 'admin') and demande.statut not in ('en_attente', 'validee_manager'):
+            messages.error(request, "Cette demande est en attente de la décision du DG.")
+            return redirect('approbations')
 
     if action == 'rejeter':
         demande.statut = 'rejete'
@@ -442,11 +585,20 @@ def traiter_demande(request, demande_id):
         _mettre_a_jour_solde(demande)
         _notifier_employe(demande, 'approuve', commentaire)
         messages.success(request, f"La demande {demande.reference} a été définitivement approuvée.")
-    else:
-        demande.statut = 'validee'
+    elif user.role == 'manager':
+        demande.statut = 'validee_manager'
         demande.valide_par = user
         demande.date_validation = timezone.now()
         demande.commentaire_validation = commentaire
+        demande.save()
+        _notifier_rh(demande)
+        _notifier_employe(demande, 'validee_manager', commentaire)
+        messages.success(request, f"La demande {demande.reference} a été validée et transmise au RH.")
+    else:
+        demande.statut = 'validee'
+        demande.valide_par_rh = user
+        demande.date_validation_rh = timezone.now()
+        demande.commentaire_validation_rh = commentaire
         demande.save()
         _notifier_dg(demande)
         _notifier_employe(demande, 'validee', commentaire)
@@ -469,7 +621,8 @@ def _mettre_a_jour_solde(demande):
 
 def _notifier_employe(demande, statut, commentaire):
     labels = {
-        'validee': "validée par votre manager, en attente de la validation finale du DG",
+        'validee_manager': "validée par votre manager, en attente de la validation du RH",
+        'validee': "validée par le RH, en attente de la validation finale du DG",
         'approuve': "définitivement approuvée",
         'rejete': "rejetée",
     }
@@ -519,6 +672,27 @@ def equipe(request):
 
 
 @login_required
+def historique_modifications(request):
+    user = request.user
+    if not user.is_manager_or_above:
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    historique = HistoriqueModification.objects.select_related(
+        'auteur', 'employe_concerne', 'demande'
+    )
+    if user.role == 'manager':
+        equipe_ids = list(user.subordonnes.values_list('id', flat=True))
+        historique = historique.filter(employe_concerne_id__in=equipe_ids)
+
+    context = {
+        'historique': historique[:300],
+        'notifications_non_lues': user.notifications.filter(lue=False).count(),
+    }
+    return render(request, 'conges/historique_modifications.html', context)
+
+
+@login_required
 def administration(request):
     user = request.user
     if user.role not in ('rh', 'admin'):
@@ -538,38 +712,48 @@ def administration(request):
             return _ajouter_type_conge(request)
         elif action == 'init_soldes':
             return _initialiser_soldes(request)
+        elif action == 'add_conge_supplementaire':
+            return _ajouter_conge_supplementaire(request)
 
     context = {
         'onglet': onglet,
         'employes': employes,
         'departements': departements,
         'types_conge': types_conge,
+        'conges_supplementaires': CongeSupplementaire.objects.select_related(
+            'employe', 'type_conge', 'accorde_par'
+        )[:50],
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
     }
     return render(request, 'conges/administration.html', context)
 
 
+def _creer_employe_depuis_post(request):
+    dept_id = request.POST.get('departement')
+    manager_id = request.POST.get('manager')
+    username = request.POST.get('email', '').split('@')[0]
+    emp = Employe.objects.create_user(
+        username=username,
+        email=request.POST.get('email'),
+        password=request.POST.get('password', 'Petrosen2025!'),
+        first_name=request.POST.get('prenom', ''),
+        last_name=request.POST.get('nom', ''),
+    )
+    emp.poste = request.POST.get('poste', '')
+    emp.role = request.POST.get('role', 'employe')
+    emp.matricule = request.POST.get('matricule', '')
+    if dept_id:
+        emp.departement_id = dept_id
+    if manager_id:
+        emp.manager_id = manager_id
+    emp.save()
+    _creer_soldes_employe(emp)
+    return emp
+
+
 def _ajouter_employe(request):
     try:
-        dept_id = request.POST.get('departement')
-        manager_id = request.POST.get('manager')
-        username = request.POST.get('email', '').split('@')[0]
-        emp = Employe.objects.create_user(
-            username=username,
-            email=request.POST.get('email'),
-            password=request.POST.get('password', 'Petrosen2025!'),
-            first_name=request.POST.get('prenom', ''),
-            last_name=request.POST.get('nom', ''),
-        )
-        emp.poste = request.POST.get('poste', '')
-        emp.role = request.POST.get('role', 'employe')
-        emp.matricule = request.POST.get('matricule', '')
-        if dept_id:
-            emp.departement_id = dept_id
-        if manager_id:
-            emp.manager_id = manager_id
-        emp.save()
-        _creer_soldes_employe(emp)
+        emp = _creer_employe_depuis_post(request)
         messages.success(request, f"L'employé {emp.get_full_name()} a été créé avec succès.")
     except Exception as e:
         messages.error(request, f"Erreur lors de la création : {e}")
@@ -616,6 +800,59 @@ def _initialiser_soldes(request):
                 count += 1
     messages.success(request, f"{count} soldes initialisés pour {annee}.")
     return redirect('/administration/?onglet=soldes')
+
+
+def _ajouter_conge_supplementaire(request):
+    try:
+        employe = Employe.objects.get(id=request.POST.get('employe'))
+        type_conge = TypeConge.objects.get(id=request.POST.get('type_conge'))
+        annee = int(request.POST.get('annee') or date.today().year)
+        try:
+            jours = Decimal(request.POST.get('nombre_jours', '').replace(',', '.'))
+        except InvalidOperation:
+            raise ValueError("Nombre de jours invalide.")
+        if jours <= 0:
+            raise ValueError("Le nombre de jours doit être positif.")
+        motif = request.POST.get('motif', '').strip()
+
+        CongeSupplementaire.objects.create(
+            employe=employe, type_conge=type_conge, annee=annee,
+            nombre_jours=jours, motif=motif, accorde_par=request.user,
+        )
+        solde, _ = SoldeConge.objects.get_or_create(
+            employe=employe, type_conge=type_conge, annee=annee,
+            defaults={'jours_acquis': type_conge.jours_max}
+        )
+        solde.jours_supplementaires += jours
+        solde.save()
+        HistoriqueModification.objects.create(
+            type_action='conge_supplementaire',
+            auteur=request.user,
+            employe_concerne=employe,
+            description=(
+                f"{jours} jour(s) de congé supplémentaire ({type_conge.libelle}, {annee}) "
+                f"accordé(s) à {employe.get_full_name()}."
+                + (f" Motif : {motif}" if motif else "")
+            ),
+        )
+        Notification.objects.create(
+            destinataire=employe,
+            titre="Congé supplémentaire crédité",
+            message=(
+                f"{jours} jour(s) de congé supplémentaire ({type_conge.libelle}, {annee}) "
+                f"ont été crédités sur votre solde."
+                + (f" Motif : {motif}" if motif else "")
+            ),
+            lien="/mon-solde/",
+        )
+        messages.success(
+            request,
+            f"{jours} jour(s) supplémentaire(s) accordé(s) à {employe.get_full_name()} "
+            f"({type_conge.libelle}, {annee})."
+        )
+    except Exception as e:
+        messages.error(request, f"Erreur : {e}")
+    return redirect('/administration/?onglet=conges_supplementaires')
 
 
 @login_required
@@ -842,3 +1079,128 @@ def profil(request):
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
     }
     return render(request, 'conges/profil.html', context)
+
+
+@login_required
+def recrutements(request):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_recrutement':
+        return _ajouter_recrutement(request)
+
+    filtre_statut = request.GET.get('statut', '')
+    embauches = Recrutement.objects.select_related('employe', 'employe__departement', 'responsable_rh')
+    if filtre_statut:
+        embauches = embauches.filter(statut=filtre_statut)
+
+    context = {
+        'embauches': embauches,
+        'employes': Employe.objects.order_by('last_name', 'first_name'),
+        'departements': Departement.objects.all(),
+        'filtre_statut': filtre_statut,
+        'notifications_non_lues': user.notifications.filter(lue=False).count(),
+    }
+    return render(request, 'conges/recrutements.html', context)
+
+
+def _ajouter_recrutement(request):
+    try:
+        date_embauche = date.fromisoformat(request.POST.get('date_embauche'))
+        if request.POST.get('mode_employe') == 'nouveau':
+            employe = _creer_employe_depuis_post(request)
+            employe.date_embauche = date_embauche
+            employe.save()
+        else:
+            employe = Employe.objects.get(id=request.POST.get('employe'))
+
+        periode_essai_fin = request.POST.get('periode_essai_fin')
+        Recrutement.objects.create(
+            employe=employe,
+            type_contrat=request.POST.get('type_contrat', 'cdi'),
+            source=request.POST.get('source', ''),
+            date_embauche=date_embauche,
+            periode_essai_fin=date.fromisoformat(periode_essai_fin) if periode_essai_fin else None,
+            responsable_rh=request.user,
+        )
+        messages.success(request, f"Recrutement de {employe.get_full_name()} enregistré avec succès.")
+    except Exception as e:
+        messages.error(request, f"Erreur lors de la création : {e}")
+    return redirect('recrutements')
+
+
+@login_required
+@require_POST
+def maj_recrutement(request, recrutement_id):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    embauche = get_object_or_404(Recrutement, id=recrutement_id)
+    embauche.statut = request.POST.get('statut', embauche.statut)
+    embauche.contrat_signe = request.POST.get('contrat_signe') == 'on'
+    embauche.visite_medicale_effectuee = request.POST.get('visite_medicale_effectuee') == 'on'
+    embauche.dossier_complet = request.POST.get('dossier_complet') == 'on'
+    embauche.notes = request.POST.get('notes', embauche.notes)
+    embauche.save()
+    messages.success(request, f"Le recrutement de {embauche.employe.get_full_name()} a été mis à jour.")
+    return redirect('recrutements')
+
+
+@login_required
+def departs(request):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_depart':
+        return _ajouter_depart(request)
+
+    liste_departs = Depart.objects.select_related('employe', 'employe__departement', 'traite_par')
+
+    context = {
+        'liste_departs': liste_departs,
+        'employes_actifs': Employe.objects.filter(actif=True).order_by('last_name', 'first_name'),
+        'notifications_non_lues': user.notifications.filter(lue=False).count(),
+    }
+    return render(request, 'conges/departs.html', context)
+
+
+def _ajouter_depart(request):
+    try:
+        Depart.objects.create(
+            employe_id=request.POST.get('employe'),
+            type_depart=request.POST.get('type_depart', 'demission'),
+            date_depart=date.fromisoformat(request.POST.get('date_depart')),
+            preavis_jours=request.POST.get('preavis_jours') or None,
+            motif=request.POST.get('motif', ''),
+            traite_par=request.user,
+        )
+        messages.success(request, "Départ enregistré avec succès.")
+    except Exception as e:
+        messages.error(request, f"Erreur lors de l'enregistrement : {e}")
+    return redirect('departs')
+
+
+@login_required
+@require_POST
+def maj_depart(request, depart_id):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    depart = get_object_or_404(Depart, id=depart_id)
+    depart.statut = request.POST.get('statut', depart.statut)
+    depart.entretien_sortie_effectue = request.POST.get('entretien_sortie_effectue') == 'on'
+    depart.solde_tout_compte_effectue = request.POST.get('solde_tout_compte_effectue') == 'on'
+    depart.materiel_restitue = request.POST.get('materiel_restitue') == 'on'
+    depart.commentaire = request.POST.get('commentaire', depart.commentaire)
+    depart.traite_par = request.user
+    depart.save()
+    messages.success(request, f"Le départ de {depart.employe.get_full_name()} a été mis à jour.")
+    return redirect('departs')

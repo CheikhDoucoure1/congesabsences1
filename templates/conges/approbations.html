@@ -10,6 +10,10 @@
       <i class="fas fa-clock"></i> En attente
       {% if stats.en_attente > 0 %}<span class="tab-badge">{{ stats.en_attente }}</span>{% endif %}
     </a>
+    <a href="?statut=validee_manager" class="tab {% if statut_filtre == 'validee_manager' %}active{% endif %}">
+      <i class="fas fa-user-check"></i> Attente RH
+      {% if stats.validee_manager > 0 %}<span class="tab-badge">{{ stats.validee_manager }}</span>{% endif %}
+    </a>
     <a href="?statut=validee" class="tab {% if statut_filtre == 'validee' %}active{% endif %}">
       <i class="fas fa-user-tie"></i> Attente DG
       {% if stats.validee > 0 %}<span class="tab-badge">{{ stats.validee }}</span>{% endif %}
@@ -71,7 +75,12 @@
                 <a href="/approbations/{{ d.id }}/" class="btn-icon-sm" title="Voir">
                   <i class="fas fa-eye"></i>
                 </a>
-                {% if request.user.role == 'dg' and d.statut in 'en_attente,validee' %}
+                {% if request.user.role in 'rh,admin' and d.statut in 'en_attente,validee_manager,validee' %}
+                <a href="/approbations/{{ d.id }}/modifier/" class="btn-icon-sm" title="Modifier">
+                  <i class="fas fa-pen"></i>
+                </a>
+                {% endif %}
+                {% if request.user.role == 'dg' and d.statut in 'en_attente,validee_manager,validee' %}
                 <button class="btn-icon-sm btn-success-icon" title="Approuver définitivement"
                         onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'approuver')">
                   <i class="fas fa-check"></i>
@@ -80,7 +89,16 @@
                         onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'rejeter')">
                   <i class="fas fa-times"></i>
                 </button>
-                {% elif request.user.role != 'dg' and d.statut == 'en_attente' %}
+                {% elif request.user.role == 'manager' and d.statut == 'en_attente' %}
+                <button class="btn-icon-sm btn-success-icon" title="Valider (transmettre au RH)"
+                        onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'approuver')">
+                  <i class="fas fa-check"></i>
+                </button>
+                <button class="btn-icon-sm btn-danger-icon" title="Rejeter"
+                        onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'rejeter')">
+                  <i class="fas fa-times"></i>
+                </button>
+                {% elif request.user.role in 'rh,admin' and d.statut in 'en_attente,validee_manager' %}
                 <button class="btn-icon-sm btn-success-icon" title="Valider (transmettre au DG)"
                         onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'approuver')">
                   <i class="fas fa-check"></i>
@@ -137,10 +155,13 @@
 {% block extra_js %}
 <script>
 const isDg = {{ is_dg|yesno:"true,false" }};
+const isRh = {{ is_rh|yesno:"true,false" }};
 function openTraitement(id, ref, action) {
   const modal = document.getElementById('traitementModal');
   const isApprove = action === 'approuver';
-  const approveLabel = isDg ? 'Approuver définitivement' : 'Valider et transmettre au DG';
+  const approveLabel = isDg
+    ? 'Approuver définitivement'
+    : (isRh ? 'Valider (transmettre au DG)' : 'Valider (transmettre au RH)');
   document.getElementById('modalTitle').innerHTML = isApprove
     ? `<i class="fas fa-check-circle text-success"></i> ${approveLabel}`
     : '<i class="fas fa-times-circle text-danger"></i> Rejeter la demande';

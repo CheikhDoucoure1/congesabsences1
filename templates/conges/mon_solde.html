@@ -41,6 +41,12 @@
             <div class="ss-label">Reportés</div>
           </div>
           {% endif %}
+          {% if solde.jours_supplementaires > 0 %}
+          <div class="solde-stat">
+            <div class="ss-value text-info">{{ solde.jours_supplementaires }}</div>
+            <div class="ss-label">Supplémentaires</div>
+          </div>
+          {% endif %}
         </div>
         <div class="solde-progress-wrapper">
           <div class="solde-progress">

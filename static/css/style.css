@@ -427,6 +427,7 @@ button { cursor: pointer; border: none; background: none; font-family: var(--fon
 .badge-danger { background: var(--danger-light); color: #991b1b; }
 .badge-secondary { background: var(--gray-100); color: var(--gray-600); }
 .badge-info { background: var(--info-light); color: #1e40af; }
+.badge-primary { background: var(--primary-light); color: var(--primary-dark); }
 
 .type-badge {
   display: inline-block;

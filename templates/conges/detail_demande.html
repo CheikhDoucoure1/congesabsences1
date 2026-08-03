@@ -9,7 +9,14 @@
        class="btn btn-outline btn-sm">
       <i class="fas fa-arrow-left"></i> Retour
     </a>
-    <span class="badge badge-lg badge-{{ demande.statut_css }}">{{ demande.statut_label }}</span>
+    <div style="display:flex;align-items:center;gap:.5rem">
+      {% if request.user.role in 'rh,admin' and demande.statut in 'en_attente,validee_manager,validee' %}
+      <a href="{% url 'modifier_demande' demande.id %}" class="btn btn-outline btn-sm">
+        <i class="fas fa-pen"></i> Modifier
+      </a>
+      {% endif %}
+      <span class="badge badge-lg badge-{{ demande.statut_css }}">{{ demande.statut_label }}</span>
+    </div>
   </div>
 
   <div class="detail-grid">
@@ -76,7 +83,7 @@
       {% if demande.valide_par %}
       <div class="card card-decision">
         <div class="card-header">
-          <h3><i class="fas fa-user-check text-info"></i> Validation manager/RH</h3>
+          <h3><i class="fas fa-user-check text-info"></i> Validation manager</h3>
         </div>
         <div class="card-body">
           <div class="detail-fields">
@@ -92,6 +99,32 @@
             <div class="detail-field detail-full">
               <span class="field-label">Commentaire</span>
               <span class="field-value">{{ demande.commentaire_validation }}</span>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if demande.valide_par_rh %}
+      <div class="card card-decision">
+        <div class="card-header">
+          <h3><i class="fas fa-user-check text-info"></i> Validation RH</h3>
+        </div>
+        <div class="card-body">
+          <div class="detail-fields">
+            <div class="detail-field">
+              <span class="field-label">Validée par</span>
+              <span class="field-value">{{ demande.valide_par_rh.get_full_name }}</span>
+            </div>
+            <div class="detail-field">
+              <span class="field-label">Le</span>
+              <span class="field-value">{{ demande.date_validation_rh|date:"d F Y à H:i" }}</span>
+            </div>
+            {% if demande.commentaire_validation_rh %}
+            <div class="detail-field detail-full">
+              <span class="field-label">Commentaire</span>
+              <span class="field-value">{{ demande.commentaire_validation_rh }}</span>
             </div>
             {% endif %}
           </div>
@@ -132,7 +165,7 @@
       {% endif %}
     </div>
 
-    {% if request.user.role == 'dg' and demande.statut in 'en_attente,validee' %}
+    {% if request.user.role == 'dg' and demande.statut in 'en_attente,validee_manager,validee' %}
     <div class="detail-sidebar">
       <div class="card">
         <div class="card-header"><h3>Décision du DG</h3></div>
@@ -159,7 +192,34 @@
         </div>
       </div>
     </div>
-    {% elif request.user.is_manager_or_above and request.user.role != 'dg' and demande.statut == 'en_attente' %}
+    {% elif request.user.role == 'manager' and demande.statut == 'en_attente' %}
+    <div class="detail-sidebar">
+      <div class="card">
+        <div class="card-header"><h3>Décision</h3></div>
+        <div class="card-body">
+          <form method="post" action="/approbations/{{ demande.id }}/traiter/">
+            {% csrf_token %}
+            <input type="hidden" name="action" id="actionInput" value="approuver">
+            <div class="form-group">
+              <label class="form-label">Commentaire (optionnel)</label>
+              <textarea name="commentaire" class="form-control" rows="4"
+                        placeholder="Message pour l'employé..."></textarea>
+            </div>
+            <div class="decision-btns">
+              <button type="submit" class="btn btn-success btn-full"
+                      onclick="document.getElementById('actionInput').value='approuver'">
+                <i class="fas fa-check"></i> Valider (transmettre au RH)
+              </button>
+              <button type="submit" class="btn btn-danger btn-full"
+                      onclick="document.getElementById('actionInput').value='rejeter'">
+                <i class="fas fa-times"></i> Rejeter
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% elif request.user.role in 'rh,admin' and demande.statut in 'en_attente,validee_manager' %}
     <div class="detail-sidebar">
       <div class="card">
         <div class="card-header"><h3>Décision</h3></div>

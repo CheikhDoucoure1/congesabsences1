@@ -1,0 +1,118 @@
+{% extends 'conges/base.html' %}
+{% block title %}Modifier demande {{ demande.reference }}{% endblock %}
+{% block page_title %}Modifier la demande{% endblock %}
+
+{% block content %}
+<div class="form-page">
+  <div class="form-page-inner">
+
+    <div class="card mb-3">
+      <div class="card-body" style="display:flex;align-items:center;gap:.75rem">
+        <div class="emp-avatar">{{ demande.employe.initiales }}</div>
+        <div>
+          <div class="emp-name"><strong>{{ demande.employe.get_full_name }}</strong></div>
+          <div class="text-muted text-sm">{{ demande.reference }} · <span class="badge badge-{{ demande.statut_css }}">{{ demande.statut_label }}</span></div>
+        </div>
+      </div>
+    </div>
+
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      <div class="card">
+        <div class="card-header">
+          <h3><i class="fas fa-edit"></i> Modifier la demande de congé</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label required">Type de congé</label>
+              <select name="type_conge" class="form-control" required>
+                {% for t in types_conge %}
+                <option value="{{ t.id }}" {% if t.id == demande.type_conge_id %}selected{% endif %}>{{ t.libelle }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label required">Nombre de jours</label>
+              <input type="number" name="nombre_jours" class="form-control" min="0.5" step="0.5"
+                     value="{{ demande.nombre_jours }}" required>
+              <small class="form-hint">Modifiable manuellement, indépendamment des dates ci-dessous.</small>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label required">Date de début</label>
+              <input type="date" name="date_debut" class="form-control" value="{{ demande.date_debut|date:'Y-m-d' }}" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label required">Date de fin</label>
+              <input type="date" name="date_fin" class="form-control" value="{{ demande.date_fin|date:'Y-m-d' }}" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" name="demi_journee" id="demiJournee" {% if demande.demi_journee %}checked{% endif %}>
+              <span class="checkmark"></span>
+              Demi-journée uniquement
+            </label>
+          </div>
+          <div class="form-group" id="periodeGroup" {% if not demande.demi_journee %}style="display:none"{% endif %}>
+            <label class="form-label">Période</label>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="periode_demi_journee" value="matin" {% if demande.periode_demi_journee == 'matin' %}checked{% endif %}>
+                <span>Matin</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="periode_demi_journee" value="apres_midi" {% if demande.periode_demi_journee == 'apres_midi' %}checked{% endif %}>
+                <span>Après-midi</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Motif</label>
+            <textarea name="motif" class="form-control" rows="4">{{ demande.motif }}</textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Intérimaire</label>
+            <select name="interimaire" class="form-control">
+              <option value="">— Aucun —</option>
+              {% for emp in employes_liste %}
+              <option value="{{ emp.id }}" {% if emp.id == demande.interimaire_id %}selected{% endif %}>{{ emp.get_full_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Justificatif</label>
+            {% if demande.justificatif %}
+            <p class="text-sm mb-2">
+              <a href="{{ demande.justificatif.url }}" target="_blank"><i class="fas fa-paperclip"></i> Fichier actuel</a>
+            </p>
+            {% endif %}
+            <input type="file" name="justificatif" class="form-control" accept=".pdf,.jpg,.jpeg,.png">
+            <small class="form-hint">Laissez vide pour conserver le justificatif actuel.</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a href="{% url 'detail_demande' demande.id %}" class="btn btn-outline">Annuler</a>
+        <button type="submit" class="btn btn-success"><i class="fas fa-save"></i> Enregistrer les modifications</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('demiJournee').addEventListener('change', function() {
+  document.getElementById('periodeGroup').style.display = this.checked ? '' : 'none';
+});
+</script>
+{% endblock %}

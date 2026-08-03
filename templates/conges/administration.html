@@ -14,6 +14,9 @@
     <a href="?onglet=soldes" class="admin-tab {% if onglet == 'soldes' %}active{% endif %}">
       <i class="fas fa-wallet"></i> Soldes
     </a>
+    <a href="?onglet=conges_supplementaires" class="admin-tab {% if onglet == 'conges_supplementaires' %}active{% endif %}">
+      <i class="fas fa-gift"></i> Congés supplémentaires
+    </a>
   </div>
 
   <!-- EMPLOYEES TAB -->
@@ -133,6 +136,87 @@
           Les soldes existants ne seront pas écrasés. Seuls les nouveaux soldes manquants seront créés.
         </p>
       </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- CONGES SUPPLEMENTAIRES TAB -->
+  {% if onglet == 'conges_supplementaires' %}
+  <div class="admin-section">
+    <div class="section-actions">
+      <h3>Congés supplémentaires</h3>
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <p>Créditez des jours de congé supplémentaires sur le solde d'un employé (ancienneté, geste exceptionnel, compensation...). Laissé à l'appréciation du Capital Humain.</p>
+        <form method="post" action="/administration/?onglet=conges_supplementaires">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="add_conge_supplementaire">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label required">Employé</label>
+              <select name="employe" class="form-control" required>
+                <option value="">— Sélectionner —</option>
+                {% for emp in employes %}
+                <option value="{{ emp.id }}">{{ emp.get_full_name }} ({{ emp.departement|default:"—" }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label required">Type de congé</label>
+              <select name="type_conge" class="form-control" required>
+                <option value="">— Sélectionner —</option>
+                {% for t in types_conge %}
+                <option value="{{ t.id }}">{{ t.libelle }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Année</label>
+              <select name="annee" class="form-control">
+                <option>2025</option>
+                <option selected>2026</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label required">Nombre de jours</label>
+              <input type="number" name="nombre_jours" class="form-control" min="0.5" step="0.5" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Motif</label>
+            <input type="text" name="motif" class="form-control" placeholder="ex: Ancienneté, geste exceptionnel...">
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-plus"></i> Créditer les jours
+          </button>
+        </form>
+      </div>
+
+      {% if conges_supplementaires %}
+      <div class="table-responsive">
+        <table class="table">
+          <thead>
+            <tr><th>Employé</th><th>Type</th><th>Année</th><th>Jours</th><th>Motif</th><th>Accordé par</th><th>Date</th></tr>
+          </thead>
+          <tbody>
+            {% for cs in conges_supplementaires %}
+            <tr>
+              <td>{{ cs.employe.get_full_name }}</td>
+              <td>{{ cs.type_conge.libelle }}</td>
+              <td>{{ cs.annee }}</td>
+              <td class="text-success">+{{ cs.nombre_jours }} j</td>
+              <td class="text-sm text-muted">{{ cs.motif|default:"—" }}</td>
+              <td class="text-sm text-muted">{{ cs.accorde_par.get_full_name|default:"—" }}</td>
+              <td class="text-sm text-muted">{{ cs.date_creation|date:"d/m/Y" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
     </div>
   </div>
   {% endif %}

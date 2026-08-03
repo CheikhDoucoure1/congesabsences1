@@ -1,0 +1,58 @@
+{% extends 'conges/base.html' %}
+{% block title %}Historique des modifications{% endblock %}
+{% block page_title %}Historique des modifications{% endblock %}
+
+{% block content %}
+<div class="list-page">
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-history"></i> Historique des modifications</h3>
+    </div>
+    <div class="card-body">
+      <p class="text-muted text-sm mb-3">
+        <i class="fas fa-lock"></i>
+        Journal en lecture seule : modifications de demandes de congé et congés supplémentaires accordés par le Capital Humain.
+        {% if request.user.role == 'manager' %}Limité aux membres de votre équipe.{% endif %}
+      </p>
+    </div>
+    {% if historique %}
+    <div class="table-responsive">
+      <table class="table table-hover">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Employé concerné</th>
+            <th>Auteur</th>
+            <th>Détail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in historique %}
+          <tr>
+            <td class="text-sm text-muted text-nowrap">{{ h.date_action|date:"d/m/Y H:i" }}</td>
+            <td>
+              {% if h.type_action == 'demande_modifiee' %}
+              <span class="badge badge-info"><i class="fas fa-edit"></i> Modification demande</span>
+              {% else %}
+              <span class="badge badge-primary"><i class="fas fa-gift"></i> Congé supplémentaire</span>
+              {% endif %}
+            </td>
+            <td>{{ h.employe_concerne.get_full_name }}</td>
+            <td class="text-sm text-muted">{{ h.auteur.get_full_name|default:"—" }}</td>
+            <td class="text-sm">{{ h.description }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <i class="fas fa-inbox"></i>
+      <h3>Aucune modification enregistrée</h3>
+      <p>L'historique des modifications apparaîtra ici.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

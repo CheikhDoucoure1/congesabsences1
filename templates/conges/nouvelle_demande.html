@@ -46,7 +46,6 @@
                   </div>
                   <div class="type-info">
                     <span class="type-name">{{ type.libelle }}</span>
-                    <span class="type-max">Max {{ type.jours_max }} j/an</span>
                     <span class="type-solde" id="solde_{{ type.id }}"></span>
                   </div>
                   {% if type.necessite_justificatif %}
@@ -129,75 +128,17 @@
             </div>
 
             <div class="form-group">
-              <label class="form-label" for="interimaire_search">
+              <label class="form-label" for="interimaire">
                 <i class="fas fa-user-clock"></i> Personne intérimaire
               </label>
-              <div class="search-dropdown" id="interimaire_wrapper" style="position:relative">
-                <input type="text" id="interimaire_search" class="form-control"
-                       autocomplete="off" placeholder="Tapez un nom pour rechercher...">
-                <input type="hidden" name="interimaire" id="interimaire">
-                <div id="interimaire_list" style="display:none;position:absolute;z-index:999;width:100%;
-                     max-height:220px;overflow-y:auto;background:#fff;border:1px solid #d1d5db;
-                     border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);margin-top:2px">
-                </div>
-              </div>
+              <select name="interimaire" id="interimaire" class="form-control">
+                <option value="">— Aucun —</option>
+                {% for emp in employes_liste %}
+                <option value="{{ emp.id }}">{{ emp.get_full_name }}{% if emp.poste %} — {{ emp.poste }}{% endif %}</option>
+                {% endfor %}
+              </select>
               <small class="form-hint">Employé(e) qui vous remplacera pendant votre absence</small>
             </div>
-
-            <script>
-            (function(){
-              var employes = [
-                {% for emp in employes_liste %}
-                {id:"{{ emp.id }}", name:"{{ emp.get_full_name }}", poste:"{{ emp.poste|default:'' }}"},
-                {% endfor %}
-              ];
-              var input  = document.getElementById('interimaire_search');
-              var hidden = document.getElementById('interimaire');
-              var list   = document.getElementById('interimaire_list');
-
-              function renderList(items) {
-                list.innerHTML = '';
-                if (!items.length) {
-                  list.innerHTML = '<div style="padding:10px;color:#94a3b8;font-size:.875rem">Aucun résultat</div>';
-                }
-                items.forEach(function(e) {
-                  var div = document.createElement('div');
-                  div.style.cssText = 'padding:10px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:.9rem';
-                  div.innerHTML = '<strong>' + e.name + '</strong>' + (e.poste ? ' <span style="color:#64748b;font-size:.8rem">— ' + e.poste + '</span>' : '');
-                  div.addEventListener('mousedown', function(ev) { ev.preventDefault(); });
-                  div.addEventListener('click', function() {
-                    input.value  = e.name;
-                    hidden.value = e.id;
-                    list.style.display = 'none';
-                  });
-                  div.addEventListener('mouseover', function() { this.style.background='#f8fafc'; });
-                  div.addEventListener('mouseout',  function() { this.style.background=''; });
-                  list.appendChild(div);
-                });
-                list.style.display = 'block';
-              }
-
-              input.addEventListener('input', function() {
-                hidden.value = '';
-                var q = this.value.trim().toLowerCase();
-                if (!q) { list.style.display = 'none'; return; }
-                var filtered = employes.filter(function(e) {
-                  return e.name.toLowerCase().includes(q);
-                });
-                renderList(filtered.slice(0, 10));
-              });
-
-              input.addEventListener('focus', function() {
-                if (this.value.trim()) input.dispatchEvent(new Event('input'));
-              });
-
-              document.addEventListener('click', function(e) {
-                if (!document.getElementById('interimaire_wrapper').contains(e.target)) {
-                  list.style.display = 'none';
-                }
-              });
-            })();
-            </script>
 
             <div class="form-group" id="justificatifGroup" style="display:none">
               <label class="form-label required">
@@ -363,7 +304,8 @@ function fillRecap() {
   const duree = document.getElementById('durationValue').textContent;
   const motif = document.getElementById('motif').value;
 
-  const interimNom = document.getElementById('interimaire_search').value.trim() || '—';
+  const interimaireSelect = document.getElementById('interimaire');
+  const interimNom = interimaireSelect.value ? interimaireSelect.options[interimaireSelect.selectedIndex].text : '—';
   const isAbsence = typeEl && typeEl.dataset.categorie === 'absence';
 
   document.getElementById('recapType').textContent = typeName;

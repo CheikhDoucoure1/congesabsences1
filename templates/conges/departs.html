@@ -1,0 +1,197 @@
+{% extends 'conges/base.html' %}
+{% block title %}Départs{% endblock %}
+{% block page_title %}Départs{% endblock %}
+
+{% block content %}
+<div class="list-page">
+  <div class="section-actions">
+    <h3>Départs enregistrés ({{ liste_departs|length }})</h3>
+    <button class="btn btn-primary btn-sm" onclick="document.getElementById('addDepartModal').classList.remove('hidden')">
+      <i class="fas fa-user-minus"></i> Déclarer un départ
+    </button>
+  </div>
+
+  <div class="card">
+    {% if liste_departs %}
+    <div class="table-responsive">
+      <table class="table table-hover">
+        <thead>
+          <tr>
+            <th>Employé</th>
+            <th>Département</th>
+            <th>Type de départ</th>
+            <th>Date d'annonce</th>
+            <th>Date de départ</th>
+            <th>Statut</th>
+            <th>Traité par</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for dep in liste_departs %}
+          <tr>
+            <td>
+              <div class="employee-cell">
+                <div class="emp-avatar">{{ dep.employe.initiales }}</div>
+                <span>{{ dep.employe.get_full_name }}</span>
+              </div>
+            </td>
+            <td class="text-sm">{{ dep.employe.departement|default:"—" }}</td>
+            <td class="text-sm">{{ dep.get_type_depart_display }}</td>
+            <td class="text-sm text-muted">{{ dep.date_annonce|date:"d/m/Y" }}</td>
+            <td class="text-sm text-muted">{{ dep.date_depart|date:"d/m/Y" }}</td>
+            <td><span class="badge badge-{{ dep.statut_css }}">{{ dep.get_statut_display }}</span></td>
+            <td class="text-sm text-muted">{{ dep.traite_par.get_full_name|default:"—" }}</td>
+            <td>
+              <div class="actions-btns">
+                <button class="btn-icon-sm" title="Mettre à jour"
+                        onclick="openStatutDepart({{ dep.id }}, '{{ dep.employe.get_full_name|escapejs }}', '{{ dep.statut }}', {{ dep.entretien_sortie_effectue|yesno:'true,false' }}, {{ dep.solde_tout_compte_effectue|yesno:'true,false' }}, {{ dep.materiel_restitue|yesno:'true,false' }}, '{{ dep.commentaire|escapejs }}')">
+                  <i class="fas fa-edit"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <i class="fas fa-inbox"></i>
+      <h3>Aucun départ</h3>
+      <p>Il n'y a pas de départ enregistré pour le moment.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Add Depart Modal -->
+<div id="addDepartModal" class="modal-backdrop hidden">
+  <div class="modal-box modal-lg">
+    <div class="modal-header">
+      <h3><i class="fas fa-user-minus"></i> Déclarer un départ</h3>
+      <button onclick="document.getElementById('addDepartModal').classList.add('hidden')" class="modal-close-btn">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <form method="post" action="{% url 'departs' %}">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add_depart">
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label required">Employé</label>
+          <select name="employe" class="form-control" required>
+            <option value="">— Sélectionner —</option>
+            {% for emp in employes_actifs %}
+            <option value="{{ emp.id }}">{{ emp.get_full_name }} ({{ emp.departement|default:"—" }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Type de départ</label>
+            <select name="type_depart" class="form-control">
+              <option value="demission">Démission</option>
+              <option value="licenciement">Licenciement</option>
+              <option value="fin_contrat">Fin de contrat</option>
+              <option value="retraite">Retraite</option>
+              <option value="rupture_conventionnelle">Rupture conventionnelle</option>
+              <option value="deces">Décès</option>
+              <option value="autre">Autre</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Date de départ effective</label>
+            <input type="date" name="date_depart" class="form-control" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Préavis (jours)</label>
+          <input type="number" name="preavis_jours" class="form-control" min="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Motif</label>
+          <textarea name="motif" class="form-control" rows="3"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="document.getElementById('addDepartModal').classList.add('hidden')">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Update Statut Modal -->
+<div id="statutDepartModal" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 id="statutDepartTitle"><i class="fas fa-edit"></i> Mettre à jour le départ</h3>
+      <button onclick="closeStatutDepart()" class="modal-close-btn"><i class="fas fa-times"></i></button>
+    </div>
+    <form method="post" id="statutDepartForm">
+      {% csrf_token %}
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Statut</label>
+          <select name="statut" id="statutDepartStatut" class="form-control">
+            <option value="planifie">Planifié</option>
+            <option value="en_cours">En cours</option>
+            <option value="finalise">Finalisé</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" name="entretien_sortie_effectue" id="statutDepartEntretien">
+            <span class="checkmark"></span>
+            Entretien de sortie effectué
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" name="solde_tout_compte_effectue" id="statutDepartSolde">
+            <span class="checkmark"></span>
+            Solde de tout compte effectué
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" name="materiel_restitue" id="statutDepartMateriel">
+            <span class="checkmark"></span>
+            Matériel restitué
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Commentaire</label>
+          <textarea name="commentaire" id="statutDepartCommentaire" class="form-control" rows="3"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="closeStatutDepart()">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function openStatutDepart(id, nom, statut, entretien, solde, materiel, commentaire) {
+  document.getElementById('statutDepartTitle').innerHTML = `<i class="fas fa-edit"></i> Mettre à jour — ${nom}`;
+  document.getElementById('statutDepartStatut').value = statut;
+  document.getElementById('statutDepartEntretien').checked = entretien;
+  document.getElementById('statutDepartSolde').checked = solde;
+  document.getElementById('statutDepartMateriel').checked = materiel;
+  document.getElementById('statutDepartCommentaire').value = commentaire;
+  document.getElementById('statutDepartForm').action = `/departs/${id}/statut/`;
+  document.getElementById('statutDepartModal').classList.remove('hidden');
+}
+function closeStatutDepart() {
+  document.getElementById('statutDepartModal').classList.add('hidden');
+}
+document.getElementById('statutDepartModal').addEventListener('click', function(e) {
+  if (e.target === this) closeStatutDepart();
+});
+</script>
+{% endblock %}
