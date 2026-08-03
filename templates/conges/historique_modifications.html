@@ -34,6 +34,8 @@
             <td>
               {% if h.type_action == 'demande_modifiee' %}
               <span class="badge badge-info"><i class="fas fa-edit"></i> Modification demande</span>
+              {% elif h.type_action == 'solde_modifie' %}
+              <span class="badge badge-warning"><i class="fas fa-wallet"></i> Modification solde</span>
               {% else %}
               <span class="badge badge-primary"><i class="fas fa-gift"></i> Congé supplémentaire</span>
               {% endif %}

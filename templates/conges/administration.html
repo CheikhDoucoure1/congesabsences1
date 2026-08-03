@@ -1,4 +1,5 @@
 {% extends 'conges/base.html' %}
+{% load l10n %}
 {% block title %}Administration{% endblock %}
 {% block page_title %}Administration{% endblock %}
 
@@ -136,6 +137,69 @@
           Les soldes existants ne seront pas écrasés. Seuls les nouveaux soldes manquants seront créés.
         </p>
       </div>
+    </div>
+
+    <div class="section-actions mt-4">
+      <h3>Soldes de congés et absences — tous les employés</h3>
+      <div style="display:flex;gap:.5rem">
+        <a href="?onglet=soldes&annee={{ annee_soldes|add:"-1" }}" class="btn btn-outline btn-sm">{{ annee_soldes|add:"-1" }}</a>
+        <a href="?onglet=soldes&annee={{ annee_soldes }}" class="btn btn-primary btn-sm">{{ annee_soldes }}</a>
+        <a href="?onglet=soldes&annee={{ annee_soldes|add:"1" }}" class="btn btn-outline btn-sm">{{ annee_soldes|add:"1" }}</a>
+      </div>
+    </div>
+    <div class="card">
+      {% if soldes_tous %}
+      <div class="table-responsive">
+        <table class="table table-hover">
+          <thead>
+            <tr>
+              <th>Employé</th>
+              <th>Type</th>
+              <th>Acquis</th>
+              <th>Pris</th>
+              <th>Reportés</th>
+              <th>Suppl.</th>
+              <th>Restants</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in soldes_tous %}
+            <tr>
+              <td>
+                <div class="employee-cell">
+                  <div class="emp-avatar">{{ s.employe.initiales }}</div>
+                  <span>{{ s.employe.get_full_name }}</span>
+                </div>
+              </td>
+              <td>
+                <span class="type-badge" style="background:{{ s.type_conge.couleur }}20;color:{{ s.type_conge.couleur }}">
+                  {{ s.type_conge.libelle }}
+                </span>
+              </td>
+              <td>{{ s.jours_acquis }}</td>
+              <td>{{ s.jours_pris }}</td>
+              <td>{{ s.jours_reportes }}</td>
+              <td>{{ s.jours_supplementaires }}</td>
+              <td class="{% if s.jours_restants < 0 %}text-danger{% else %}text-success{% endif %}"><strong>{{ s.jours_restants }}</strong></td>
+              <td>
+                <button class="btn-icon-sm" title="Modifier"
+                        onclick="openSoldeModal({{ s.id }}, '{{ s.employe.get_full_name|escapejs }}', '{{ s.type_conge.libelle|escapejs }}', {{ s.jours_acquis|unlocalize }}, {{ s.jours_pris|unlocalize }}, {{ s.jours_reportes|unlocalize }}, {{ s.jours_supplementaires|unlocalize }})">
+                  <i class="fas fa-pen"></i>
+                </button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <h3>Aucun solde pour {{ annee_soldes }}</h3>
+        <p>Utilisez l'initialisation des soldes ci-dessus pour cette année.</p>
+      </div>
+      {% endif %}
     </div>
   </div>
   {% endif %}
@@ -402,6 +466,50 @@
     </form>
   </div>
 </div>
+
+<!-- Modify Solde Modal -->
+<div id="soldeModal" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3><i class="fas fa-wallet"></i> Modifier le solde — <span id="soldeModalTitle"></span></h3>
+      <button onclick="document.getElementById('soldeModal').classList.add('hidden')" class="modal-close-btn">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <form method="post" action="/administration/?onglet=soldes">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="modifier_solde">
+      <input type="hidden" name="solde_id" id="soldeId">
+      <input type="hidden" name="annee_filtre" value="{{ annee_soldes }}">
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required">Jours acquis</label>
+            <input type="number" name="jours_acquis" id="soldeAcquis" class="form-control" min="0" step="0.5" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Jours pris</label>
+            <input type="number" name="jours_pris" id="soldePris" class="form-control" min="0" step="0.5" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required">Jours reportés</label>
+            <input type="number" name="jours_reportes" id="soldeReportes" class="form-control" min="0" step="0.5" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Jours supplémentaires</label>
+            <input type="number" name="jours_supplementaires" id="soldeSupplementaires" class="form-control" min="0" step="0.5" required>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="document.getElementById('soldeModal').classList.add('hidden')">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -412,6 +520,16 @@ function showImportFile(input) {
     document.getElementById('importFileSelected').classList.remove('hidden');
     document.getElementById('importFileName').textContent = input.files[0].name;
   }
+}
+
+function openSoldeModal(id, employeNom, typeLibelle, acquis, pris, reportes, supplementaires) {
+  document.getElementById('soldeModalTitle').textContent = employeNom + ' — ' + typeLibelle;
+  document.getElementById('soldeId').value = id;
+  document.getElementById('soldeAcquis').value = acquis;
+  document.getElementById('soldePris').value = pris;
+  document.getElementById('soldeReportes').value = reportes;
+  document.getElementById('soldeSupplementaires').value = supplementaires;
+  document.getElementById('soldeModal').classList.remove('hidden');
 }
 </script>
 {% endblock %}

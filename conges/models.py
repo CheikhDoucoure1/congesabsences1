@@ -368,6 +368,7 @@ class HistoriqueModification(models.Model):
     TYPE_CHOICES = [
         ('demande_modifiee', 'Modification de demande de congé'),
         ('conge_supplementaire', 'Congé supplémentaire accordé'),
+        ('solde_modifie', 'Modification de solde'),
     ]
 
     type_action = models.CharField(max_length=30, choices=TYPE_CHOICES)

@@ -714,12 +714,21 @@ def administration(request):
             return _initialiser_soldes(request)
         elif action == 'add_conge_supplementaire':
             return _ajouter_conge_supplementaire(request)
+        elif action == 'modifier_solde':
+            return _modifier_solde(request)
+
+    annee_soldes = int(request.GET.get('annee', date.today().year))
+    soldes_tous = SoldeConge.objects.filter(annee=annee_soldes).select_related(
+        'employe', 'type_conge'
+    ).order_by('employe__last_name', 'employe__first_name', 'type_conge__libelle')
 
     context = {
         'onglet': onglet,
         'employes': employes,
         'departements': departements,
         'types_conge': types_conge,
+        'soldes_tous': soldes_tous,
+        'annee_soldes': annee_soldes,
         'conges_supplementaires': CongeSupplementaire.objects.select_related(
             'employe', 'type_conge', 'accorde_par'
         )[:50],
@@ -800,6 +809,68 @@ def _initialiser_soldes(request):
                 count += 1
     messages.success(request, f"{count} soldes initialisés pour {annee}.")
     return redirect('/administration/?onglet=soldes')
+
+
+def _modifier_solde(request):
+    annee_filtre = request.POST.get('annee_filtre') or date.today().year
+    try:
+        solde = SoldeConge.objects.select_related('employe', 'type_conge').get(
+            id=request.POST.get('solde_id')
+        )
+
+        def _lire_decimal(champ):
+            try:
+                return Decimal(request.POST.get(champ, '0').replace(',', '.'))
+            except InvalidOperation:
+                raise ValueError(f"Valeur invalide pour « {champ} ».")
+
+        nouvelles_valeurs = {
+            'jours_acquis': _lire_decimal('jours_acquis'),
+            'jours_pris': _lire_decimal('jours_pris'),
+            'jours_reportes': _lire_decimal('jours_reportes'),
+            'jours_supplementaires': _lire_decimal('jours_supplementaires'),
+        }
+        for champ, valeur in nouvelles_valeurs.items():
+            if valeur < 0:
+                raise ValueError(f"« {champ} » ne peut pas être négatif.")
+
+        labels = {
+            'jours_acquis': 'Jours acquis',
+            'jours_pris': 'Jours pris',
+            'jours_reportes': 'Jours reportés',
+            'jours_supplementaires': 'Jours supplémentaires',
+        }
+        avant = {champ: getattr(solde, champ) for champ in nouvelles_valeurs}
+
+        for champ, valeur in nouvelles_valeurs.items():
+            setattr(solde, champ, valeur)
+        solde.save()
+
+        changements = [
+            f"{labels[champ]} : « {avant[champ]} » → « {nouvelles_valeurs[champ]} »"
+            for champ in nouvelles_valeurs if avant[champ] != nouvelles_valeurs[champ]
+        ]
+        if changements:
+            HistoriqueModification.objects.create(
+                type_action='solde_modifie',
+                auteur=request.user,
+                employe_concerne=solde.employe,
+                description=(
+                    f"Solde {solde.type_conge.libelle} ({solde.annee}) de {solde.employe.get_full_name()} modifié : "
+                    + "; ".join(changements)
+                ),
+            )
+        messages.success(
+            request,
+            f"Solde de {solde.employe.get_full_name()} ({solde.type_conge.libelle}, {solde.annee}) mis à jour."
+        )
+    except SoldeConge.DoesNotExist:
+        messages.error(request, "Solde introuvable.")
+    except ValueError as e:
+        messages.error(request, str(e))
+    except Exception as e:
+        messages.error(request, f"Erreur : {e}")
+    return redirect(f"/administration/?onglet=soldes&annee={annee_filtre}")
 
 
 def _ajouter_conge_supplementaire(request):
