@@ -4,6 +4,7 @@ Usage: python manage.py import_employes
 """
 import unicodedata
 from django.core.management.base import BaseCommand
+from django.utils.crypto import get_random_string
 from conges.models import Employe, Departement, TypeConge, SoldeConge
 from datetime import date
 
@@ -141,10 +142,11 @@ class Command(BaseCommand):
                 skipped_count += 1
                 continue
 
+            mot_de_passe = get_random_string(12)
             emp = Employe.objects.create_user(
                 username=username,
                 email=email,
-                password="password",
+                password=mot_de_passe,
                 first_name=prenom,
                 last_name=nom,
             )
@@ -152,6 +154,7 @@ class Command(BaseCommand):
             emp.departement = dept
             emp.actif = True
             emp.save()
+            self.stdout.write(f"    mot de passe : {mot_de_passe}")
 
             # Create annual leave balance (24 days acquired, 0 taken)
             if "annuel" in types_conge:
@@ -166,4 +169,7 @@ class Command(BaseCommand):
             self.stdout.write(f"  + {prenom} {nom} ({direction})")
 
         self.stdout.write(f"\n{created_count} employes crees, {skipped_count} ignores (deja existants).")
-        self.stdout.write("Mot de passe par defaut: password")
+        self.stdout.write(
+            "Un mot de passe aleatoire a ete genere pour chaque nouveau compte (affiche ci-dessus). "
+            "Transmettez-les individuellement et demandez leur changement des la premiere connexion."
+        )

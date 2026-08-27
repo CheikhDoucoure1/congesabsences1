@@ -376,7 +376,10 @@
               <option value="employe">Employé</option>
               <option value="manager">Manager</option>
               <option value="rh">Responsable RH</option>
+              {% if request.user.role == 'admin' %}
+              <option value="dg">Directeur Général</option>
               <option value="admin">Administrateur</option>
+              {% endif %}
             </select>
           </div>
         </div>

@@ -4,6 +4,7 @@ Usage: python manage.py populate_employes
        python manage.py populate_employes --reset  (supprime les employés existants d'abord)
 """
 from django.core.management.base import BaseCommand
+from django.utils.crypto import get_random_string
 from datetime import date
 from conges.models import Employe, Departement, TypeConge, SoldeConge
 
@@ -131,10 +132,11 @@ class Command(BaseCommand):
                 else:
                     if Employe.objects.filter(username=username).exists():
                         username = email.replace('@', '_').replace('.', '_')
+                    mot_de_passe = get_random_string(12)
                     emp = Employe.objects.create_user(
                         username=username,
                         email=email,
-                        password='Petrosen2025!',
+                        password=mot_de_passe,
                         first_name=prenom,
                         last_name=nom,
                     )
@@ -143,7 +145,7 @@ class Command(BaseCommand):
                     emp.actif = True
                     emp.save()
                     created_map[email] = emp
-                    self.stdout.write(f'  + {prenom} {nom}')
+                    self.stdout.write(f'  + {prenom} {nom} — mot de passe : {mot_de_passe}')
 
                 if type_annuel:
                     SoldeConge.objects.get_or_create(
@@ -157,6 +159,7 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(
             f'\n{len(created_map)} employes crees/mis a jour avec succes.\n'
-            f'Mot de passe par defaut : Petrosen2025!\n'
+            f'Un mot de passe aleatoire a ete genere pour chaque nouveau compte (affiche ci-dessus).\n'
+            f'Transmettez-les individuellement et demandez leur changement des la premiere connexion.\n'
             f'Directions : DG, DPEX, DDP, DFC, CG'
         ))

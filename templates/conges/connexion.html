@@ -60,6 +60,7 @@
 
       <form method="post" action="/connexion/" id="loginForm">
         {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.GET.next }}">
         <div class="form-group">
           <label class="form-label">Adresse e-mail</label>
           <div class="input-with-icon">

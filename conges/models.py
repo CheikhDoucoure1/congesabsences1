@@ -1,7 +1,9 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, FileExtensionValidator
 from datetime import date, timedelta
+
+from .validators import EXTENSIONS_AVATAR, EXTENSIONS_JUSTIFICATIF
 
 
 class Departement(models.Model):
@@ -32,7 +34,10 @@ class Employe(AbstractUser):
     manager = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='subordonnes')
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='employe')
     date_embauche = models.DateField(null=True, blank=True)
-    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
+    avatar = models.ImageField(
+        upload_to='avatars/', null=True, blank=True,
+        validators=[FileExtensionValidator(allowed_extensions=sorted(EXTENSIONS_AVATAR))],
+    )
     actif = models.BooleanField(default=True)
 
     class Meta:
@@ -169,7 +174,10 @@ class DemandeConge(models.Model):
     periode_demi_journee = models.CharField(max_length=10, choices=DEMI_JOURNEE_CHOICES, blank=True)
     nombre_jours = models.DecimalField(max_digits=5, decimal_places=1, default=0)
     motif = models.TextField(blank=True)
-    justificatif = models.FileField(upload_to='justificatifs/', null=True, blank=True)
+    justificatif = models.FileField(
+        upload_to='justificatifs/', null=True, blank=True,
+        validators=[FileExtensionValidator(allowed_extensions=sorted(EXTENSIONS_JUSTIFICATIF))],
+    )
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='en_attente')
     date_soumission = models.DateTimeField(auto_now_add=True)
     valide_par = models.ForeignKey(

@@ -91,7 +91,7 @@
             <label class="form-label">Justificatif</label>
             {% if demande.justificatif %}
             <p class="text-sm mb-2">
-              <a href="{{ demande.justificatif.url }}" target="_blank"><i class="fas fa-paperclip"></i> Fichier actuel</a>
+              <a href="{% url 'voir_justificatif' demande.id %}"><i class="fas fa-paperclip"></i> Fichier actuel</a>
             </p>
             {% endif %}
             <input type="file" name="justificatif" class="form-control" accept=".pdf,.jpg,.jpeg,.png">

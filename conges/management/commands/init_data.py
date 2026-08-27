@@ -206,6 +206,11 @@ class Command(BaseCommand):
             dem.save()
 
         self.stdout.write(self.style.SUCCESS('\n✅ Données initialisées avec succès!\n'))
+        self.stdout.write(self.style.WARNING(
+            '⚠️  Mots de passe de démonstration volontairement simples — '
+            'à utiliser uniquement en environnement de développement local, '
+            'jamais en production.\n'
+        ))
         self.stdout.write('Comptes de connexion :')
         self.stdout.write('  Admin    : admin@petrosen.sn / admin123')
         self.stdout.write('  DG       : dg@petrosen.sn / password')

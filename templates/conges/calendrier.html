@@ -41,8 +41,9 @@
 {% endblock %}
 
 {% block extra_js %}
+{{ evenements_json|json_script:"evenements-data" }}
 <script>
-const EVENTS = {{ evenements_json|safe }};
+const EVENTS = JSON.parse(document.getElementById('evenements-data').textContent);
 const FIRST_DAY = new Date('{{ premier_jour|date:"Y-m-d" }}');
 const LAST_DAY = new Date('{{ dernier_jour|date:"Y-m-d" }}');
 const TODAY_STR = '{{ today|date:"Y-m-d" }}';
@@ -103,17 +104,36 @@ function buildLegend() {
     if (!types[e.type]) types[e.type] = e.couleur;
   });
   const legend = document.getElementById('calendarLegend');
+  legend.innerHTML = '';
+
   if (Object.keys(types).length === 0) {
-    legend.innerHTML = '<p class="text-muted text-sm text-center">Aucun congé approuvé ce mois-ci.</p>';
+    const empty = document.createElement('p');
+    empty.className = 'text-muted text-sm text-center';
+    empty.textContent = 'Aucun congé approuvé ce mois-ci.';
+    legend.appendChild(empty);
     return;
   }
-  legend.innerHTML = '<div class="legend-items">' +
-    Object.entries(types).map(([type, color]) =>
-      `<div class="legend-item">
-        <span class="legend-dot" style="background:${color}"></span>
-        <span>${type}</span>
-      </div>`
-    ).join('') + '</div>';
+
+  // Built with DOM APIs (not innerHTML) so a type label/color coming from
+  // the database can never be interpreted as markup.
+  const container = document.createElement('div');
+  container.className = 'legend-items';
+  Object.entries(types).forEach(([type, color]) => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+
+    const dot = document.createElement('span');
+    dot.className = 'legend-dot';
+    dot.style.background = color;
+
+    const label = document.createElement('span');
+    label.textContent = type;
+
+    item.appendChild(dot);
+    item.appendChild(label);
+    container.appendChild(item);
+  });
+  legend.appendChild(container);
 }
 
 buildCalendar();

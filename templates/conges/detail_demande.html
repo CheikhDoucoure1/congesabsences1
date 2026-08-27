@@ -67,7 +67,7 @@
             {% if demande.justificatif %}
             <div class="detail-field detail-full">
               <span class="field-label"><i class="fas fa-paperclip"></i> Justificatif</span>
-              <a href="{{ demande.justificatif.url }}" target="_blank" class="file-link-btn">
+              <a href="{% url 'voir_justificatif' demande.id %}" class="file-link-btn">
                 <i class="fas fa-file-download"></i> Télécharger le justificatif
               </a>
             </div>

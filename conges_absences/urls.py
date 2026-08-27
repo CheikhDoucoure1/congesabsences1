@@ -30,4 +30,16 @@ urlpatterns = [
     path('notifications/', views.notifications, name='notifications'),
     path('api/notifications/', views.api_notifications, name='api_notifications'),
     path('profil/', views.profil, name='profil'),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    path('mes-demandes/<int:demande_id>/justificatif/', views.voir_justificatif, name='voir_justificatif'),
+] + static(
+    # Only the public 'avatars/' subfolder is served this way (profile
+    # pictures — low sensitivity, needed by every page's header/sidebar).
+    # Leave justificatifs (medical certificates, etc.) OUT of this: they are
+    # served exclusively through the authenticated views.voir_justificatif,
+    # which checks the requester actually has the right to see that file.
+    # Note this static() helper is itself a no-op unless settings.DEBUG is
+    # True — a real deployment needs its own web server / storage backend
+    # with equivalent access control for the media root.
+    settings.MEDIA_URL + 'avatars/',
+    document_root=str(settings.MEDIA_ROOT / 'avatars'),
+)

@@ -228,9 +228,10 @@
 {% endblock %}
 
 {% block extra_js %}
+{{ soldes_json|json_script:"soldes-data" }}
 <script>
 const today = '{{ today }}';
-const SOLDES = {{ soldes_json|safe }};
+const SOLDES = JSON.parse(document.getElementById('soldes-data').textContent);
 let currentStep = 1;
 
 // Show remaining balance on each type card

@@ -1,0 +1,12 @@
+asgiref==3.12.1
+Django==5.2.14
+django-auth-ldap==5.3.0
+et-xmlfile==2.0.0
+openpyxl==3.1.5
+pillow==12.3.0
+psycopg==3.3.4
+psycopg-binary==3.3.4
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+python-ldap==3.4.7
+sqlparse==0.6.0

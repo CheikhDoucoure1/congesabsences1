@@ -1,16 +1,86 @@
+import logging
+
 from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth import login, logout, authenticate
+from django.contrib.auth import login, logout, authenticate, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.password_validation import validate_password
 from django.contrib import messages
+from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.utils import timezone
+from django.utils.crypto import get_random_string
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.db.models import Q, Count
-from django.http import JsonResponse
+from django.http import JsonResponse, FileResponse, Http404
 from django.views.decorators.http import require_POST
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
-import json
 
 from .models import Employe, DemandeConge, TypeConge, SoldeConge, Notification, Departement, Recrutement, Depart, CongeSupplementaire, HistoriqueModification
+from .validators import (
+    valider_fichier, COULEUR_HEX_RE,
+    EXTENSIONS_JUSTIFICATIF, EXTENSIONS_AVATAR, EXTENSIONS_IMPORT_EXCEL,
+    TAILLE_MAX_JUSTIFICATIF, TAILLE_MAX_AVATAR, TAILLE_MAX_IMPORT_EXCEL,
+)
+
+logger = logging.getLogger(__name__)
+
+# Attempts allowed before a (client IP, email) pair is temporarily throttled
+# on the login form — mitigates online brute-force / credential stuffing.
+LOGIN_MAX_TENTATIVES = 5
+LOGIN_BLOCAGE_SECONDES = 300
+
+# Roles a non-admin (rh) user is allowed to grant when creating/importing
+# employees. Only an existing admin account can mint another admin or set
+# someone as dg.
+ROLES_ATTRIBUABLES_PAR_RH = {'employe', 'manager', 'rh'}
+
+
+def _int_ou(valeur, defaut):
+    """Best-effort int() that falls back instead of raising on bad input
+    (e.g. a hand-edited ?annee=abc query string)."""
+    try:
+        return int(valeur)
+    except (TypeError, ValueError):
+        return defaut
+
+
+def _roles_autorises_pour(user):
+    if user.role == 'admin':
+        return {c for c, _ in Employe.ROLE_CHOICES}
+    return ROLES_ATTRIBUABLES_PAR_RH
+
+
+def _demande_visible_ou_404(user, demande_id):
+    """Fetch a DemandeConge, scoped to what `user` is allowed to see.
+
+    - employe : only their own requests.
+    - manager : their own requests + their direct team's (never another
+      manager's team — this is the whole point of the scoping; without it
+      any manager could view/act on any employee's request by guessing IDs).
+    - rh / dg / admin : full visibility by design (they oversee everyone).
+    """
+    if user.role == 'manager':
+        return get_object_or_404(
+            DemandeConge,
+            Q(id=demande_id) & (Q(employe__in=user.subordonnes.all()) | Q(employe=user))
+        )
+    if user.is_manager_or_above:  # rh, dg, admin
+        return get_object_or_404(DemandeConge, id=demande_id)
+    return get_object_or_404(DemandeConge, id=demande_id, employe=user)
+
+
+def _cle_limitation_connexion(request, email):
+    ip = request.META.get('REMOTE_ADDR', 'inconnu')
+    return f'login_attempts:{ip}:{email.lower()}'
+
+
+def _next_url_sure(request, valeur_brute):
+    if valeur_brute and url_has_allowed_host_and_scheme(
+        valeur_brute, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return valeur_brute
+    return 'tableau_de_bord'
 
 
 def connexion(request):
@@ -19,15 +89,32 @@ def connexion(request):
     if request.method == 'POST':
         email = request.POST.get('email', '').strip()
         password = request.POST.get('password', '')
+        next_url = _next_url_sure(request, request.POST.get('next') or request.GET.get('next'))
+
+        cle = _cle_limitation_connexion(request, email)
+        if cache.get(cle, 0) >= LOGIN_MAX_TENTATIVES:
+            messages.error(request, "Trop de tentatives échouées. Réessayez dans quelques minutes.")
+            return render(request, 'conges/connexion.html')
+
+        # Resolve to the local `username` field ModelBackend expects when a
+        # matching account already exists (demo/local accounts, previously
+        # imported employees, or an AD user who has already logged in once
+        # before). Otherwise pass the typed value straight through — when
+        # LDAP is enabled, LDAPBackend's own search matches on email too
+        # (see AUTH_LDAP_USER_SEARCH), so a brand-new AD user who has never
+        # logged in here yet can still be found and auto-provisioned on
+        # first success.
         try:
-            user_obj = Employe.objects.get(email=email)
-            user = authenticate(request, username=user_obj.username, password=password)
-            if user and user.actif:
-                login(request, user)
-                next_url = request.GET.get('next', 'tableau_de_bord')
-                return redirect(next_url)
+            identifiant = Employe.objects.get(email__iexact=email).username
         except Employe.DoesNotExist:
-            pass
+            identifiant = email
+
+        user = authenticate(request, username=identifiant, password=password)
+        if user and user.actif:
+            cache.delete(cle)
+            login(request, user)
+            return redirect(next_url)
+        cache.set(cle, cache.get(cle, 0) + 1, LOGIN_BLOCAGE_SECONDES)
         messages.error(request, 'Email ou mot de passe incorrect.')
     return render(request, 'conges/connexion.html')
 
@@ -144,7 +231,12 @@ def nouvelle_demande(request):
                 else:
                     if type_conge.necessite_justificatif and not justificatif:
                         errors.append(f"Un justificatif est requis pour '{type_conge.libelle}'.")
-                    else:
+                    if justificatif:
+                        try:
+                            valider_fichier(justificatif, EXTENSIONS_JUSTIFICATIF, TAILLE_MAX_JUSTIFICATIF)
+                        except ValidationError as e:
+                            errors.append(e.message)
+                    if not errors:
                         demande = DemandeConge(
                             employe=user,
                             type_conge=type_conge,
@@ -174,7 +266,7 @@ def nouvelle_demande(request):
     context = {
         'types_conge': types_conge,
         'soldes': soldes,
-        'soldes_json': json.dumps(soldes_json),
+        'soldes_json': soldes_json,
         'employes_liste': employes_liste,
         'today': date.today().isoformat(),
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
@@ -259,6 +351,7 @@ def mes_demandes(request):
 
 
 @login_required
+@require_POST
 def annuler_demande(request, demande_id):
     demande = get_object_or_404(DemandeConge, id=demande_id, employe=request.user)
     if demande.statut == 'en_attente':
@@ -273,7 +366,7 @@ def annuler_demande(request, demande_id):
 @login_required
 def mon_solde(request):
     user = request.user
-    annee = int(request.GET.get('annee', date.today().year))
+    annee = _int_ou(request.GET.get('annee'), date.today().year)
     soldes = SoldeConge.objects.filter(
         employe=user, annee=annee
     ).select_related('type_conge').order_by('type_conge__libelle')
@@ -300,8 +393,8 @@ def mon_solde(request):
 def calendrier(request):
     user = request.user
     today = date.today()
-    mois = int(request.GET.get('mois', today.month))
-    annee_cal = int(request.GET.get('annee', today.year))
+    mois = _int_ou(request.GET.get('mois'), today.month)
+    annee_cal = _int_ou(request.GET.get('annee'), today.year)
 
     if mois < 1:
         mois = 12
@@ -350,7 +443,7 @@ def calendrier(request):
                 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'][mois]
 
     context = {
-        'evenements_json': json.dumps(evenements),
+        'evenements_json': evenements,
         'mois': mois,
         'annee': annee_cal,
         'mois_nom': mois_nom,
@@ -405,16 +498,29 @@ def approbations(request):
 @login_required
 def detail_demande(request, demande_id):
     user = request.user
-    if user.is_manager_or_above:
-        demande = get_object_or_404(DemandeConge, id=demande_id)
-    else:
-        demande = get_object_or_404(DemandeConge, id=demande_id, employe=user)
+    demande = _demande_visible_ou_404(user, demande_id)
 
     context = {
         'demande': demande,
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
     }
     return render(request, 'conges/detail_demande.html', context)
+
+
+@login_required
+def voir_justificatif(request, demande_id):
+    """Serve a leave request's supporting document only to people who are
+    allowed to see the request itself (see _demande_visible_ou_404) — the
+    file is otherwise not reachable at all (it is deliberately excluded
+    from the public /media/ static mount, see urls.py)."""
+    demande = _demande_visible_ou_404(request.user, demande_id)
+    if not demande.justificatif:
+        raise Http404
+    return FileResponse(
+        demande.justificatif.open('rb'),
+        as_attachment=True,
+        filename=demande.justificatif.name.rsplit('/', 1)[-1],
+    )
 
 
 @login_required
@@ -477,6 +583,12 @@ def modifier_demande(request, demande_id):
                     errors.append("Le nombre de jours doit être positif.")
             except InvalidOperation:
                 errors.append("Nombre de jours invalide.")
+
+        if justificatif:
+            try:
+                valider_fichier(justificatif, EXTENSIONS_JUSTIFICATIF, TAILLE_MAX_JUSTIFICATIF)
+            except ValidationError as e:
+                errors.append(e.message)
 
         if not errors:
             avant = {
@@ -545,7 +657,19 @@ def traiter_demande(request, demande_id):
     if not user.is_manager_or_above:
         return JsonResponse({'error': 'Non autorisé'}, status=403)
 
-    demande = get_object_or_404(DemandeConge, id=demande_id)
+    if user.role == 'manager':
+        # A manager may only act on their own team's requests — without this
+        # filter any manager could approve/reject anyone's request by
+        # guessing the demande_id in the URL.
+        demande = get_object_or_404(
+            DemandeConge, id=demande_id, employe__in=user.subordonnes.all()
+        )
+    else:
+        demande = get_object_or_404(DemandeConge, id=demande_id)
+
+    if demande.employe_id == user.id:
+        messages.error(request, "Vous ne pouvez pas traiter votre propre demande.")
+        return redirect('approbations')
 
     if demande.statut not in ('en_attente', 'validee_manager', 'validee'):
         messages.error(request, "Cette demande a déjà été traitée.")
@@ -717,7 +841,7 @@ def administration(request):
         elif action == 'modifier_solde':
             return _modifier_solde(request)
 
-    annee_soldes = int(request.GET.get('annee', date.today().year))
+    annee_soldes = _int_ou(request.GET.get('annee'), date.today().year)
     soldes_tous = SoldeConge.objects.filter(annee=annee_soldes).select_related(
         'employe', 'type_conge'
     ).order_by('employe__last_name', 'employe__first_name', 'type_conge__libelle')
@@ -741,15 +865,25 @@ def _creer_employe_depuis_post(request):
     dept_id = request.POST.get('departement')
     manager_id = request.POST.get('manager')
     username = request.POST.get('email', '').split('@')[0]
+
+    role_demande = request.POST.get('role', 'employe')
+    if role_demande not in _roles_autorises_pour(request.user):
+        # e.g. an 'rh' account trying to grant 'admin'/'dg' — silently fall
+        # back instead of trusting client-submitted privilege escalation.
+        role_demande = 'employe'
+
+    mot_de_passe_fourni = request.POST.get('password')
+    mot_de_passe = mot_de_passe_fourni or get_random_string(12)
+
     emp = Employe.objects.create_user(
         username=username,
         email=request.POST.get('email'),
-        password=request.POST.get('password', 'Petrosen2025!'),
+        password=mot_de_passe,
         first_name=request.POST.get('prenom', ''),
         last_name=request.POST.get('nom', ''),
     )
     emp.poste = request.POST.get('poste', '')
-    emp.role = request.POST.get('role', 'employe')
+    emp.role = role_demande
     emp.matricule = request.POST.get('matricule', '')
     if dept_id:
         emp.departement_id = dept_id
@@ -757,15 +891,19 @@ def _creer_employe_depuis_post(request):
         emp.manager_id = manager_id
     emp.save()
     _creer_soldes_employe(emp)
-    return emp
+    return emp, mot_de_passe, not mot_de_passe_fourni
 
 
 def _ajouter_employe(request):
     try:
-        emp = _creer_employe_depuis_post(request)
-        messages.success(request, f"L'employé {emp.get_full_name()} a été créé avec succès.")
-    except Exception as e:
-        messages.error(request, f"Erreur lors de la création : {e}")
+        emp, mot_de_passe, generee = _creer_employe_depuis_post(request)
+        msg = f"L'employé {emp.get_full_name()} a été créé avec succès."
+        if generee:
+            msg += f" Mot de passe généré : {mot_de_passe} (à transmettre à l'employé de façon sécurisée)."
+        messages.success(request, msg)
+    except Exception:
+        logger.exception("Échec de création d'employé via l'administration")
+        messages.error(request, "Erreur lors de la création de l'employé. Vérifiez les informations saisies.")
     return redirect('/administration/?onglet=employes')
 
 
@@ -782,22 +920,28 @@ def _creer_soldes_employe(employe):
 
 def _ajouter_type_conge(request):
     try:
+        couleur = request.POST.get('couleur', '#2196F3')
+        if not COULEUR_HEX_RE.match(couleur):
+            raise ValueError("Couleur invalide (format attendu : #RRGGBB).")
         TypeConge.objects.create(
             code=request.POST.get('code', ''),
             libelle=request.POST.get('libelle', ''),
-            couleur=request.POST.get('couleur', '#2196F3'),
-            jours_max=int(request.POST.get('jours_max', 30)),
+            couleur=couleur,
+            jours_max=_int_ou(request.POST.get('jours_max'), 30),
             necessite_justificatif=request.POST.get('necessite_justificatif') == 'on',
             description=request.POST.get('description', ''),
         )
         messages.success(request, "Type de congé ajouté avec succès.")
-    except Exception as e:
-        messages.error(request, f"Erreur : {e}")
+    except ValueError as e:
+        messages.error(request, str(e))
+    except Exception:
+        logger.exception("Échec de création de type de congé")
+        messages.error(request, "Erreur lors de la création du type de congé.")
     return redirect('/administration/?onglet=types_conge')
 
 
 def _initialiser_soldes(request):
-    annee = int(request.POST.get('annee', date.today().year))
+    annee = _int_ou(request.POST.get('annee'), date.today().year)
     count = 0
     for emp in Employe.objects.filter(actif=True):
         for tc in TypeConge.objects.filter(actif=True):
@@ -868,8 +1012,9 @@ def _modifier_solde(request):
         messages.error(request, "Solde introuvable.")
     except ValueError as e:
         messages.error(request, str(e))
-    except Exception as e:
-        messages.error(request, f"Erreur : {e}")
+    except Exception:
+        logger.exception("Échec de modification de solde")
+        messages.error(request, "Erreur lors de la mise à jour du solde.")
     return redirect(f"/administration/?onglet=soldes&annee={annee_filtre}")
 
 
@@ -877,7 +1022,7 @@ def _ajouter_conge_supplementaire(request):
     try:
         employe = Employe.objects.get(id=request.POST.get('employe'))
         type_conge = TypeConge.objects.get(id=request.POST.get('type_conge'))
-        annee = int(request.POST.get('annee') or date.today().year)
+        annee = _int_ou(request.POST.get('annee'), date.today().year)
         try:
             jours = Decimal(request.POST.get('nombre_jours', '').replace(',', '.'))
         except InvalidOperation:
@@ -921,8 +1066,13 @@ def _ajouter_conge_supplementaire(request):
             f"{jours} jour(s) supplémentaire(s) accordé(s) à {employe.get_full_name()} "
             f"({type_conge.libelle}, {annee})."
         )
-    except Exception as e:
-        messages.error(request, f"Erreur : {e}")
+    except ValueError as e:
+        messages.error(request, str(e))
+    except (Employe.DoesNotExist, TypeConge.DoesNotExist):
+        messages.error(request, "Employé ou type de congé introuvable.")
+    except Exception:
+        logger.exception("Échec d'attribution de congé supplémentaire")
+        messages.error(request, "Erreur lors de l'attribution du congé supplémentaire.")
     return redirect('/administration/?onglet=conges_supplementaires')
 
 
@@ -939,13 +1089,21 @@ def importer_employes(request):
     import openpyxl
     fichier = request.FILES['fichier_excel']
     try:
-        wb = openpyxl.load_workbook(fichier)
+        valider_fichier(fichier, EXTENSIONS_IMPORT_EXCEL, TAILLE_MAX_IMPORT_EXCEL)
+    except ValidationError as e:
+        messages.error(request, e.message)
+        return redirect('/administration/?onglet=employes')
+
+    try:
+        # read_only keeps memory use bounded for large sheets; data_only
+        # reads computed values instead of formulas.
+        wb = openpyxl.load_workbook(fichier, read_only=True, data_only=True)
         ws = wb.active
     except Exception:
         messages.error(request, "Fichier Excel invalide.")
         return redirect('/administration/?onglet=employes')
 
-    headers = [str(c.value).strip().lower() if c.value else '' for c in ws[1]]
+    headers = [str(c.value).strip().lower() if c.value else '' for c in next(ws.iter_rows(min_row=1, max_row=1))]
     required = {'prenom', 'nom', 'email'}
     if not required.issubset(set(headers)):
         messages.error(request, "Colonnes obligatoires manquantes : Prenom, Nom, Email.")
@@ -959,7 +1117,8 @@ def importer_employes(request):
         except (ValueError, IndexError):
             return ''
 
-    crees, mis_a_jour, erreurs = 0, 0, []
+    roles_autorises = _roles_autorises_pour(request.user)
+    crees, mis_a_jour, erreurs, comptes_generes = 0, 0, [], []
     annee = date.today().year
     type_annuel = TypeConge.objects.filter(code='annuel').first()
 
@@ -978,10 +1137,15 @@ def importer_employes(request):
         role        = col(row, 'role') or 'employe'
         dept_code   = col(row, 'departement')
         manager_email = col(row, 'manager')
-        password    = col(row, 'mot de passe') or 'Petrosen2025!'
+        password_col  = col(row, 'mot de passe')
 
-        if role not in ('employe', 'manager', 'rh', 'admin'):
+        if role not in ('employe', 'manager', 'rh', 'admin', 'dg'):
             role = 'employe'
+        if role not in roles_autorises:
+            # rh accounts may not grant admin/dg via a spreadsheet either.
+            role = 'employe'
+
+        password = password_col or get_random_string(12)
 
         dept = None
         if dept_code:
@@ -1033,10 +1197,21 @@ def importer_employes(request):
                         defaults={'jours_acquis': 24}
                     )
                 crees += 1
-        except Exception as e:
-            erreurs.append(f"Ligne {i} ({email}) : {e}")
+                if not password_col:
+                    comptes_generes.append((email, password))
+        except Exception:
+            logger.exception("Échec d'import de la ligne %s (%s)", i, email)
+            erreurs.append(f"Ligne {i} ({email}) : données invalides ou déjà utilisées.")
 
     msg = f"Import terminé : {crees} créé(s), {mis_a_jour} mis à jour."
+    if comptes_generes:
+        apercu = "; ".join(f"{e} / {p}" for e, p in comptes_generes[:5])
+        suite = " (…)" if len(comptes_generes) > 5 else ""
+        msg += (
+            f" Mot de passe généré pour {len(comptes_generes)} nouveau(x) compte(s) sans mot de passe "
+            f"fourni dans le fichier : {apercu}{suite}. Transmettez-les individuellement et demandez "
+            f"leur changement dès la première connexion."
+        )
     if erreurs:
         msg += f" {len(erreurs)} erreur(s) : " + " | ".join(erreurs[:5])
         messages.warning(request, msg)
@@ -1076,9 +1251,9 @@ def telecharger_template_employes(request):
 
     exemples = [
         ['Aminata', 'Diallo', 'a.diallo@petrosen.sn', 'PET-001', 'Ingénieure Process',
-         'DEP', 'employe', 'i.diop@petrosen.sn', 'Petrosen2025!'],
+         'DEP', 'employe', 'i.diop@petrosen.sn', ''],
         ['Moussa', 'Ndiaye', 'm.ndiaye@petrosen.sn', 'PET-002', 'Comptable',
-         'FIN', 'employe', 'o.kane@petrosen.sn', 'Petrosen2025!'],
+         'FIN', 'employe', 'o.kane@petrosen.sn', ''],
     ]
     for r_idx, row in enumerate(exemples, start=2):
         for c_idx, val in enumerate(row, start=1):
@@ -1088,9 +1263,10 @@ def telecharger_template_employes(request):
     ws2 = wb.create_sheet("Aide")
     ws2['A1'] = "Valeurs acceptées pour la colonne Role :"
     ws2['A2'] = "employe  |  manager  |  rh  |  admin"
-    ws2['A4'] = "Colonne Departement : code (DG, DRH, DEP, FIN, HSE, JUR, DSI, LOG) ou nom complet"
-    ws2['A6'] = "Colonne Manager : email du manager direct (doit exister dans le système)"
-    ws2['A8'] = "Mot de passe : laissez vide pour utiliser Petrosen2025! par défaut"
+    ws2['A3'] = "(un compte RH important le fichier ne peut pas s'attribuer ou attribuer 'admin'/'dg' — réservé aux administrateurs)"
+    ws2['A5'] = "Colonne Departement : code (DG, DRH, DEP, FIN, HSE, JUR, DSI, LOG) ou nom complet"
+    ws2['A7'] = "Colonne Manager : email du manager direct (doit exister dans le système)"
+    ws2['A9'] = "Mot de passe : laissez vide pour générer un mot de passe aléatoire sécurisé par employé (affiché après import, à transmettre individuellement)"
 
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -1132,14 +1308,28 @@ def profil(request):
         user.first_name = request.POST.get('prenom', user.first_name)
         user.last_name = request.POST.get('nom', user.last_name)
         user.telephone = request.POST.get('telephone', user.telephone)
-        if request.FILES.get('avatar'):
-            user.avatar = request.FILES['avatar']
+
+        avatar_upload = request.FILES.get('avatar')
+        if avatar_upload:
+            try:
+                valider_fichier(avatar_upload, EXTENSIONS_AVATAR, TAILLE_MAX_AVATAR)
+                user.avatar = avatar_upload
+            except ValidationError as e:
+                messages.error(request, e.message)
+
         new_pwd = request.POST.get('nouveau_mot_de_passe')
         if new_pwd:
             current_pwd = request.POST.get('mot_de_passe_actuel')
             if user.check_password(current_pwd):
-                user.set_password(new_pwd)
-                messages.success(request, "Mot de passe modifié.")
+                try:
+                    validate_password(new_pwd, user=user)
+                except ValidationError as e:
+                    for err in e.messages:
+                        messages.error(request, err)
+                else:
+                    user.set_password(new_pwd)
+                    update_session_auth_hash(request, user)
+                    messages.success(request, "Mot de passe modifié.")
             else:
                 messages.error(request, "Mot de passe actuel incorrect.")
         user.save()
@@ -1180,10 +1370,13 @@ def recrutements(request):
 def _ajouter_recrutement(request):
     try:
         date_embauche = date.fromisoformat(request.POST.get('date_embauche'))
+        mot_de_passe_genere = None
         if request.POST.get('mode_employe') == 'nouveau':
-            employe = _creer_employe_depuis_post(request)
+            employe, mot_de_passe, generee = _creer_employe_depuis_post(request)
             employe.date_embauche = date_embauche
             employe.save()
+            if generee:
+                mot_de_passe_genere = mot_de_passe
         else:
             employe = Employe.objects.get(id=request.POST.get('employe'))
 
@@ -1196,9 +1389,15 @@ def _ajouter_recrutement(request):
             periode_essai_fin=date.fromisoformat(periode_essai_fin) if periode_essai_fin else None,
             responsable_rh=request.user,
         )
-        messages.success(request, f"Recrutement de {employe.get_full_name()} enregistré avec succès.")
-    except Exception as e:
-        messages.error(request, f"Erreur lors de la création : {e}")
+        msg = f"Recrutement de {employe.get_full_name()} enregistré avec succès."
+        if mot_de_passe_genere:
+            msg += f" Mot de passe généré : {mot_de_passe_genere} (à transmettre à l'employé de façon sécurisée)."
+        messages.success(request, msg)
+    except (Employe.DoesNotExist, TypeError, ValueError):
+        messages.error(request, "Données invalides pour la création du recrutement.")
+    except Exception:
+        logger.exception("Échec de création de recrutement")
+        messages.error(request, "Erreur lors de la création du recrutement.")
     return redirect('recrutements')
 
 
@@ -1252,8 +1451,11 @@ def _ajouter_depart(request):
             traite_par=request.user,
         )
         messages.success(request, "Départ enregistré avec succès.")
-    except Exception as e:
-        messages.error(request, f"Erreur lors de l'enregistrement : {e}")
+    except (TypeError, ValueError):
+        messages.error(request, "Données invalides (vérifiez la date de départ).")
+    except Exception:
+        logger.exception("Échec d'enregistrement de départ")
+        messages.error(request, "Erreur lors de l'enregistrement du départ.")
     return redirect('departs')
 
 
