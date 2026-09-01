@@ -100,10 +100,11 @@ def connexion(request):
         # matching account already exists (demo/local accounts, previously
         # imported employees, or an AD user who has already logged in once
         # before). Otherwise pass the typed value straight through — when
-        # LDAP is enabled, LDAPBackend's own search matches on email too
-        # (see AUTH_LDAP_USER_SEARCH), so a brand-new AD user who has never
-        # logged in here yet can still be found and auto-provisioned on
-        # first success.
+        # LDAP is enabled, LDAPBackend's own search also matches on
+        # userPrincipalName (see AUTH_LDAP_USER_SEARCH), which is normally
+        # the same "user@domain" shape as what this form asks for, so a
+        # brand-new AD user who has never logged in here yet can still be
+        # found and auto-provisioned on first success.
         try:
             identifiant = Employe.objects.get(email__iexact=email).username
         except Employe.DoesNotExist:
@@ -236,17 +237,33 @@ def nouvelle_demande(request):
                             valider_fichier(justificatif, EXTENSIONS_JUSTIFICATIF, TAILLE_MAX_JUSTIFICATIF)
                         except ValidationError as e:
                             errors.append(e.message)
+
+                    demande = DemandeConge(
+                        employe=user,
+                        type_conge=type_conge,
+                        date_debut=date_debut,
+                        date_fin=date_fin,
+                        demi_journee=demi_journee,
+                        periode_demi_journee=periode_demi_journee if demi_journee else '',
+                        motif=motif,
+                        interimaire_id=interimaire_id,
+                    )
+                    # Refuse a request that would exceed the employee's
+                    # remaining balance for this leave type. Silently
+                    # allowed when there is no balance record yet (a new
+                    # employee whose soldes haven't been initialized) —
+                    # that's a data-setup gap for RH to fix, not a reason
+                    # to block a legitimate first request.
+                    solde = soldes.get(type_conge.id)
+                    if solde is not None:
+                        jours_demandes = demande.calculer_jours()
+                        if jours_demandes > solde.jours_restants:
+                            errors.append(
+                                f"Solde insuffisant : {jours_demandes} jour(s) demandé(s) pour "
+                                f"'{type_conge.libelle}', {solde.jours_restants} jour(s) restant(s)."
+                            )
+
                     if not errors:
-                        demande = DemandeConge(
-                            employe=user,
-                            type_conge=type_conge,
-                            date_debut=date_debut,
-                            date_fin=date_fin,
-                            demi_journee=demi_journee,
-                            periode_demi_journee=periode_demi_journee if demi_journee else '',
-                            motif=motif,
-                            interimaire_id=interimaire_id,
-                        )
                         if justificatif:
                             demande.justificatif = justificatif
                         demande.save()
@@ -610,6 +627,21 @@ def modifier_demande(request, demande_id):
             if justificatif:
                 demande.justificatif = justificatif
             demande.nombre_jours = nombre_jours if nombre_jours is not None else demande.calculer_jours()
+
+            # RH keeps the authority to override — they already can adjust
+            # balances directly elsewhere in /administration/ — but they're
+            # warned rather than silently exceeding the employee's balance.
+            solde = SoldeConge.objects.filter(
+                employe=demande.employe, type_conge=demande.type_conge, annee=demande.date_debut.year
+            ).first()
+            if solde is not None and demande.nombre_jours > solde.jours_restants:
+                messages.warning(
+                    request,
+                    f"Attention : {demande.nombre_jours} jour(s) dépasse(nt) le solde restant de "
+                    f"{demande.employe.get_full_name()} ({solde.jours_restants} jour(s) pour "
+                    f"'{demande.type_conge.libelle}')."
+                )
+
             demande.save()
 
             apres = {
@@ -825,6 +857,11 @@ def administration(request):
 
     onglet = request.GET.get('onglet', 'employes')
     employes = Employe.objects.filter(actif=True).select_related('departement').order_by('last_name')
+    # Includes inactive accounts too — RH needs to see them in the list to
+    # be able to reactivate one by mistake-deactivated, unlike the dropdowns
+    # above (`employes`) which should only ever offer active people as a
+    # manager or as a recipient of extra leave days.
+    tous_les_employes = Employe.objects.select_related('departement', 'manager').order_by('last_name')
     departements = Departement.objects.all()
     types_conge = TypeConge.objects.all()
 
@@ -849,6 +886,7 @@ def administration(request):
     context = {
         'onglet': onglet,
         'employes': employes,
+        'tous_les_employes': tous_les_employes,
         'departements': departements,
         'types_conge': types_conge,
         'soldes_tous': soldes_tous,
@@ -904,6 +942,162 @@ def _ajouter_employe(request):
     except Exception:
         logger.exception("Échec de création d'employé via l'administration")
         messages.error(request, "Erreur lors de la création de l'employé. Vérifiez les informations saisies.")
+    return redirect('/administration/?onglet=employes')
+
+
+def _descendants_ids(employe):
+    """All employees transitively reporting to `employe` (their team, their
+    team's team, etc.) — used to stop an edit from creating a management
+    cycle (assigning someone as the manager of one of their own, even
+    indirect, subordinates)."""
+    ids = set()
+    a_visiter = [employe.id]
+    while a_visiter:
+        courant = a_visiter.pop()
+        enfants = Employe.objects.filter(manager_id=courant).values_list('id', flat=True)
+        for e in enfants:
+            if e not in ids:
+                ids.add(e)
+                a_visiter.append(e)
+    return ids
+
+
+@login_required
+def modifier_employe(request, employe_id):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    employe = get_object_or_404(Employe, id=employe_id)
+    roles_autorises = _roles_autorises_pour(user)
+    interdits_comme_manager = _descendants_ids(employe) | {employe.id}
+
+    if request.method == 'POST':
+        avant = {
+            'Prénom': employe.first_name,
+            'Nom': employe.last_name,
+            'Matricule': employe.matricule or '—',
+            'Poste': employe.poste or '—',
+            'Département': employe.departement.nom if employe.departement else '—',
+            'Rôle': employe.get_role_display(),
+            'Manager': employe.manager.get_full_name() if employe.manager else '—',
+        }
+
+        role_demande = request.POST.get('role', employe.role)
+        if role_demande not in roles_autorises:
+            # e.g. an rh account trying to grant admin/dg — keep the
+            # current role rather than trusting the client-submitted value.
+            role_demande = employe.role if employe.role in roles_autorises else 'employe'
+
+        manager_id_str = request.POST.get('manager') or ''
+        manager_id = int(manager_id_str) if manager_id_str.isdigit() else None
+        if manager_id is not None and manager_id in interdits_comme_manager:
+            messages.error(
+                request,
+                "Choix de manager invalide : cette personne fait partie de l'équipe "
+                f"(directe ou indirecte) de {employe.get_full_name()} — ça créerait une boucle hiérarchique."
+            )
+            return redirect('modifier_employe', employe_id=employe.id)
+
+        employe.first_name = request.POST.get('prenom', '').strip() or employe.first_name
+        employe.last_name = request.POST.get('nom', '').strip() or employe.last_name
+        employe.matricule = request.POST.get('matricule', '').strip() or None
+        employe.poste = request.POST.get('poste', '').strip()
+        employe.role = role_demande
+        employe.departement_id = request.POST.get('departement') or None
+        employe.manager_id = manager_id
+        employe.actif = request.POST.get('actif') == 'on'
+
+        try:
+            employe.save()
+        except Exception:
+            logger.exception("Échec de modification de l'employé %s", employe.id)
+            messages.error(
+                request,
+                "Erreur lors de l'enregistrement — vérifiez notamment que le matricule "
+                "n'est pas déjà utilisé par quelqu'un d'autre."
+            )
+            return redirect('modifier_employe', employe_id=employe.id)
+
+        apres = {
+            'Prénom': employe.first_name,
+            'Nom': employe.last_name,
+            'Matricule': employe.matricule or '—',
+            'Poste': employe.poste or '—',
+            'Département': employe.departement.nom if employe.departement else '—',
+            'Rôle': employe.get_role_display(),
+            'Manager': employe.manager.get_full_name() if employe.manager else '—',
+        }
+        changements = [
+            f"{champ} : « {avant[champ]} » → « {apres[champ]} »"
+            for champ in avant if avant[champ] != apres[champ]
+        ]
+        if changements:
+            HistoriqueModification.objects.create(
+                type_action='employe_modifie',
+                auteur=user,
+                employe_concerne=employe,
+                description=f"Fiche de {employe.get_full_name()} modifiée : " + "; ".join(changements),
+            )
+        messages.success(request, f"La fiche de {employe.get_full_name()} a été mise à jour.")
+        return redirect('/administration/?onglet=employes')
+
+    context = {
+        'employe_modifie': employe,
+        'departements': Departement.objects.all(),
+        'managers_possibles': Employe.objects.filter(actif=True).exclude(
+            id__in=interdits_comme_manager
+        ).order_by('last_name', 'first_name'),
+        'roles_autorises': roles_autorises,
+        'notifications_non_lues': user.notifications.filter(lue=False).count(),
+    }
+    return render(request, 'conges/modifier_employe.html', context)
+
+
+@login_required
+@require_POST
+def toggle_actif_employe(request, employe_id):
+    user = request.user
+    if user.role not in ('rh', 'admin'):
+        messages.error(request, "Accès non autorisé.")
+        return redirect('tableau_de_bord')
+
+    employe = get_object_or_404(Employe, id=employe_id)
+    if employe.id == user.id:
+        messages.error(request, "Vous ne pouvez pas désactiver votre propre compte.")
+        return redirect('/administration/?onglet=employes')
+
+    employe.actif = not employe.actif
+    employe.save()
+
+    HistoriqueModification.objects.create(
+        type_action='employe_desactive' if not employe.actif else 'employe_reactive',
+        auteur=user,
+        employe_concerne=employe,
+        description=(
+            f"Compte de {employe.get_full_name()} "
+            + ("désactivé." if not employe.actif else "réactivé.")
+        ),
+    )
+
+    if not employe.actif:
+        messages.success(
+            request,
+            f"Le compte de {employe.get_full_name()} a été désactivé — il/elle ne peut plus se connecter."
+        )
+        subordonnes_actifs = employe.subordonnes.filter(actif=True)
+        if subordonnes_actifs.exists():
+            noms = ", ".join(e.get_full_name() for e in subordonnes_actifs[:10])
+            messages.warning(
+                request,
+                f"⚠️ {subordonnes_actifs.count()} employé(s) reportent encore à {employe.get_full_name()} "
+                f"({noms}) — leurs demandes ne pourront plus être traitées au niveau manager tant qu'un "
+                f"nouveau manager ne leur est pas assigné."
+            )
+    else:
+        messages.success(request, f"Le compte de {employe.get_full_name()} a été réactivé.")
+
     return redirect('/administration/?onglet=employes')
 
 

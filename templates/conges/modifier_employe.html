@@ -1,0 +1,117 @@
+{% extends 'conges/base.html' %}
+{% block title %}Modifier {{ employe_modifie.get_full_name }}{% endblock %}
+{% block page_title %}Modifier l'employé{% endblock %}
+
+{% block content %}
+<div class="form-page">
+  <div class="form-page-inner">
+
+    <div class="card mb-3">
+      <div class="card-body" style="display:flex;align-items:center;gap:.75rem">
+        <div class="emp-avatar">{{ employe_modifie.initiales }}</div>
+        <div>
+          <div class="emp-name"><strong>{{ employe_modifie.get_full_name }}</strong></div>
+          <div class="text-muted text-sm">
+            {{ employe_modifie.email }}
+            {% if not employe_modifie.actif %}· <span class="badge badge-secondary">Compte désactivé</span>{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="card">
+        <div class="card-header">
+          <h3><i class="fas fa-user-edit"></i> Fiche employé</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label required">Prénom</label>
+              <input type="text" name="prenom" class="form-control" value="{{ employe_modifie.first_name }}" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label required">Nom</label>
+              <input type="text" name="nom" class="form-control" value="{{ employe_modifie.last_name }}" required>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Email</label>
+              <input type="email" class="form-control" value="{{ employe_modifie.email }}" disabled>
+              <small class="form-hint">Non modifiable ici — c'est l'identifiant de connexion.</small>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Matricule</label>
+              <input type="text" name="matricule" class="form-control" value="{{ employe_modifie.matricule|default:'' }}">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Poste</label>
+              <input type="text" name="poste" class="form-control" value="{{ employe_modifie.poste }}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Rôle</label>
+              <select name="role" class="form-control">
+                <option value="employe" {% if employe_modifie.role == 'employe' %}selected{% endif %}>Employé</option>
+                <option value="manager" {% if employe_modifie.role == 'manager' %}selected{% endif %}>Manager</option>
+                <option value="rh" {% if employe_modifie.role == 'rh' %}selected{% endif %}>Responsable RH</option>
+                {% if 'dg' in roles_autorises %}
+                <option value="dg" {% if employe_modifie.role == 'dg' %}selected{% endif %}>Directeur Général</option>
+                {% endif %}
+                {% if 'admin' in roles_autorises %}
+                <option value="admin" {% if employe_modifie.role == 'admin' %}selected{% endif %}>Administrateur</option>
+                {% endif %}
+              </select>
+              {% if employe_modifie.role in 'dg,admin' and employe_modifie.role not in roles_autorises %}
+              <small class="form-hint">Rôle actuel « {{ employe_modifie.get_role_display }} » — seul un compte Administrateur peut le changer.</small>
+              {% endif %}
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Département</label>
+              <select name="departement" class="form-control">
+                <option value="">— Aucun —</option>
+                {% for d in departements %}
+                <option value="{{ d.id }}" {% if d.id == employe_modifie.departement_id %}selected{% endif %}>{{ d.nom }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Manager direct</label>
+              <select name="manager" class="form-control">
+                <option value="">— Aucun —</option>
+                {% for m in managers_possibles %}
+                <option value="{{ m.id }}" {% if m.id == employe_modifie.manager_id %}selected{% endif %}>
+                  {{ m.get_full_name }} ({{ m.get_role_display }})
+                </option>
+                {% endfor %}
+              </select>
+              <small class="form-hint">La liste exclut automatiquement cette personne et son équipe (pour éviter une boucle hiérarchique).</small>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" name="actif" {% if employe_modifie.actif %}checked{% endif %}>
+              <span class="checkmark"></span>
+              Compte actif (peut se connecter)
+            </label>
+            <small class="form-hint">
+              Pour un départ, préférez plutôt le bouton « Désactiver » depuis la liste des employés —
+              il vous prévient si cette personne est encore le manager d'une équipe active.
+            </small>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a href="{% url 'administration' %}?onglet=employes" class="btn btn-outline">Annuler</a>
+        <button type="submit" class="btn btn-success"><i class="fas fa-save"></i> Enregistrer les modifications</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -178,11 +178,14 @@ if AUTH_LDAP_ENABLED:
     # Subtree search from the domain root: the employees are spread across
     # several OUs under this base, so this recurses into all of them rather
     # than requiring one fixed OU. Matches on either the AD login
-    # (sAMAccountName) or the email address, since that's what the app's own
-    # login form already asks for.
+    # (sAMAccountName) or the UPN (userPrincipalName, the "user@domain"
+    # form AD itself uses for login) — covers both what IT expects and what
+    # the app's own login form asks for (an email-shaped identifier), since
+    # UPN commonly equals the mail address without depending on it being
+    # in sync with the `mail` attribute specifically.
     AUTH_LDAP_USER_SEARCH = LDAPSearch(
         _ldap_base_dn, ldap.SCOPE_SUBTREE,
-        '(|(sAMAccountName=%(user)s)(mail=%(user)s))',
+        '(|(sAMAccountName=%(user)s)(userPrincipalName=%(user)s))',
     )
 
     # AD attributes -> Employe fields, refreshed on every successful login
@@ -215,5 +218,21 @@ if AUTH_LDAP_ENABLED:
         'django_auth_ldap.backend.LDAPBackend',
         'django.contrib.auth.backends.ModelBackend',
     ]
+
+    # Set DJANGO_LDAP_DEBUG=True temporarily to see exactly what
+    # django-auth-ldap is doing on each login attempt (connect, search,
+    # bind, attribute population) in the server's own stdout/journalctl —
+    # invaluable when a login silently fails with no other clue why.
+    # Turn it back off once diagnosed: at DEBUG level this can log bind
+    # attempts, which you don't want piling up in production logs forever.
+    if _env_bool('DJANGO_LDAP_DEBUG', False):
+        LOGGING = {
+            'version': 1,
+            'disable_existing_loggers': False,
+            'handlers': {'console': {'class': 'logging.StreamHandler'}},
+            'loggers': {
+                'django_auth_ldap': {'handlers': ['console'], 'level': 'DEBUG'},
+            },
+        }
 else:
     AUTHENTICATION_BACKENDS = ['django.contrib.auth.backends.ModelBackend']

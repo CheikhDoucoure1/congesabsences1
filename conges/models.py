@@ -377,6 +377,9 @@ class HistoriqueModification(models.Model):
         ('demande_modifiee', 'Modification de demande de congé'),
         ('conge_supplementaire', 'Congé supplémentaire accordé'),
         ('solde_modifie', 'Modification de solde'),
+        ('employe_modifie', 'Modification de fiche employé'),
+        ('employe_desactive', 'Compte employé désactivé'),
+        ('employe_reactive', 'Compte employé réactivé'),
     ]
 
     type_action = models.CharField(max_length=30, choices=TYPE_CHOICES)

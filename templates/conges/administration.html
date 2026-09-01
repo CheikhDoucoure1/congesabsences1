@@ -24,7 +24,7 @@
   {% if onglet == 'employes' %}
   <div class="admin-section">
     <div class="section-actions">
-      <h3>Gestion des employés ({{ employes|length }})</h3>
+      <h3>Gestion des employés ({{ tous_les_employes|length }})</h3>
       <div style="display:flex;gap:.5rem;flex-wrap:wrap">
         <a href="{% url 'template_employes' %}" class="btn btn-outline btn-sm">
           <i class="fas fa-file-excel"></i> Télécharger le modèle
@@ -48,11 +48,13 @@
               <th>Poste</th>
               <th>Rôle</th>
               <th>Manager</th>
+              <th>Statut</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {% for emp in employes %}
-            <tr>
+            {% for emp in tous_les_employes %}
+            <tr{% if not emp.actif %} class="text-muted"{% endif %}>
               <td>
                 <div class="employee-cell">
                   <div class="emp-avatar">{{ emp.initiales }}</div>
@@ -64,6 +66,33 @@
               <td class="text-sm">{{ emp.poste|default:"—" }}</td>
               <td><span class="badge badge-info">{{ emp.get_role_display }}</span></td>
               <td class="text-sm text-muted">{{ emp.manager.get_full_name|default:"—" }}</td>
+              <td>
+                {% if emp.actif %}
+                <span class="badge badge-success">Actif</span>
+                {% else %}
+                <span class="badge badge-secondary">Inactif</span>
+                {% endif %}
+              </td>
+              <td>
+                <div style="display:flex;gap:.4rem">
+                  <a href="{% url 'modifier_employe' emp.id %}" class="btn-icon-sm" title="Modifier">
+                    <i class="fas fa-pen"></i>
+                  </a>
+                  {% if emp.id != request.user.id %}
+                  <form method="post" action="{% url 'toggle_actif_employe' emp.id %}"
+                        onsubmit="return confirm('{% if emp.actif %}Désactiver{% else %}Réactiver{% endif %} le compte de {{ emp.get_full_name|escapejs }} ?');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn-icon-sm" title="{% if emp.actif %}Désactiver{% else %}Réactiver{% endif %}">
+                      {% if emp.actif %}
+                      <i class="fas fa-user-slash text-danger"></i>
+                      {% else %}
+                      <i class="fas fa-user-check text-success"></i>
+                      {% endif %}
+                    </button>
+                  </form>
+                  {% endif %}
+                </div>
+              </td>
             </tr>
             {% endfor %}
           </tbody>
@@ -405,8 +434,8 @@
         </div>
         <div class="form-group">
           <label class="form-label">Mot de passe initial</label>
-          <input type="text" name="password" class="form-control" value="Petrosen2025!" placeholder="Mot de passe temporaire">
-          <small class="text-muted">L'employé devra le changer à sa première connexion.</small>
+          <input type="text" name="password" class="form-control" placeholder="Laisser vide pour générer un mot de passe aléatoire sécurisé">
+          <small class="text-muted">Si laissé vide, un mot de passe aléatoire est généré et affiché une fois l'employé créé.</small>
         </div>
       </div>
       <div class="modal-footer">

@@ -36,6 +36,12 @@
               <span class="badge badge-info"><i class="fas fa-edit"></i> Modification demande</span>
               {% elif h.type_action == 'solde_modifie' %}
               <span class="badge badge-warning"><i class="fas fa-wallet"></i> Modification solde</span>
+              {% elif h.type_action == 'employe_modifie' %}
+              <span class="badge badge-info"><i class="fas fa-user-edit"></i> Fiche employé</span>
+              {% elif h.type_action == 'employe_desactive' %}
+              <span class="badge badge-secondary"><i class="fas fa-user-slash"></i> Compte désactivé</span>
+              {% elif h.type_action == 'employe_reactive' %}
+              <span class="badge badge-success"><i class="fas fa-user-check"></i> Compte réactivé</span>
               {% else %}
               <span class="badge badge-primary"><i class="fas fa-gift"></i> Congé supplémentaire</span>
               {% endif %}

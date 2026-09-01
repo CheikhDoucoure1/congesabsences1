@@ -49,7 +49,7 @@ Créez le rôle applicatif et la base, avec un mot de passe généré :
 
 ```bash
 sudo -u postgres psql <<'EOF'
-CREATE ROLE conges_absences WITH LOGIN PASSWORD 'change-moi';
+CREATE ROLE conges_absences WITH LOGIN PASSWORD 'Caccesabs@202!';
 CREATE DATABASE conges_absences OWNER conges_absences;
 EOF
 ```
@@ -73,7 +73,7 @@ Internet).
 ```bash
 sudo -u deploy -H bash -c '
   cd /opt/conges-absences
-  git clone <url-de-votre-depot> .
+  git clone ><url-de-votre-depot .
 '
 ```
 
@@ -169,7 +169,7 @@ sudo -u deploy -H bash -c '
 from conges.models import Employe
 from django.utils.crypto import get_random_string
 mdp = get_random_string(16)
-u = Employe.objects.create_user(username=\"admin\", email=\"admin@petrosen.sn\", password=mdp, first_name=\"Admin\", last_name=\"Système\")
+u = Employe.objects.create_user(username=\"admin\", email=\"admin@petrosen.sn\", password='Mdepass@8787', first_name=\"Admin\", last_name=\"Système\")
 u.role = \"admin\"; u.actif = True; u.save()
 print(\"Mot de passe admin genere :\", mdp)
 "
@@ -333,6 +333,91 @@ sudo systemctl restart conges-absences
 
 Testez ensuite une connexion avec un compte AD réel depuis la page de
 connexion de l'application.
+
+### Vérifier que ça marche vraiment (du plus simple au plus précis)
+
+Si la connexion échoue, remontez cette liste dans l'ordre — chaque étape
+isole une cause différente sans dépendre des précédentes.
+
+**1. Le réseau.** Le serveur joint-il le contrôleur de domaine sur le bon
+port ?
+
+```bash
+sudo -u deploy nc -zv PETROSEN-SRV-DC1.PETROSEN.SN 636
+```
+
+Si ça échoue : pare-feu, DNS, ou le serveur n'est simplement pas sur le
+même réseau que l'AD. Rien côté application ne peut compenser ça.
+
+**2. Le certificat TLS.** La poignée de main LDAPS aboutit-elle ?
+
+```bash
+openssl s_client -connect PETROSEN-SRV-DC1.PETROSEN.SN:636 -showcerts </dev/null
+```
+
+Cherchez `Verify return code: 0 (ok)` à la fin. Une erreur de certificat ici
+(autorité inconnue, nom ne correspondant pas) confirme que vous avez besoin
+de la variable `DJANGO_LDAP_CA_CERT_FILE` vue plus haut — jamais de contournement en
+désactivant la validation.
+
+**3. Le bind et la recherche, indépendamment de Django.** Isole si le
+problème vient du compte de service / de la base de recherche / du filtre,
+avant même de faire intervenir l'application :
+
+```bash
+sudo apt install -y ldap-utils   # ldapsearch — outil de diagnostic uniquement
+ldapsearch -H ldaps://PETROSEN-SRV-DC1.PETROSEN.SN:636 \
+  -D 'PETROSEN\adminclb' -W \
+  -b 'DC=PETROSEN,DC=SN' \
+  '(sAMAccountName=<login-dun-vrai-compte-de-test>)'
+```
+
+`-W` demande le mot de passe du compte de service de façon interactive
+(ne le mettez jamais en argument de commande, ça resterait dans
+l'historique du shell). Si ça retourne bien l'entrée de l'utilisateur avec
+ses attributs (`givenName`, `sn`, `mail`...), le service AD et le compte de
+service fonctionnent — un souci restant serait forcément côté configuration
+Django.
+
+**4. Django lui-même, avec les logs détaillés.** Activez temporairement le
+log verbeux (voir `.env.example`) :
+
+```ini
+DJANGO_LDAP_DEBUG=True
+```
+
+```bash
+sudo systemctl restart conges-absences
+sudo journalctl -u conges-absences -f
+```
+
+Puis, dans un autre terminal, testez une authentification directement :
+
+```bash
+sudo -u deploy -H bash -c '
+  cd /opt/conges-absences && source .venv/bin/activate
+  python manage.py shell -c "
+from django.contrib.auth import authenticate
+u = authenticate(username=\"<login-ou-email-dun-vrai-compte-de-test>\", password=\"<son-mot-de-passe>\")
+print(\"Résultat :\", u)
+if u:
+    print(\"role:\", u.role, \"| email:\", u.email, \"| actif:\", u.actif)
+"
+'
+```
+
+Le terminal avec `journalctl` affiche en direct chaque étape que
+`django-auth-ldap` effectue (connexion, recherche, bind, récupération des
+attributs) — c'est ici que vous verrez la raison précise d'un échec silencieux.
+**Repassez `DJANGO_LDAP_DEBUG=False` une fois le diagnostic terminé** : en
+mode debug, les tentatives de connexion sont journalisées en détail, ce
+qu'on ne veut pas laisser tourner en continu en production.
+
+**5. Bout en bout.** Connectez-vous avec un vrai compte AD depuis la page
+de connexion de l'application, puis vérifiez dans `/administration/` que
+le compte est bien apparu (voir l'échange précédent : il est créé
+automatiquement au premier login réussi, avec le rôle par défaut — à
+compléter ensuite via l'écran "Modifier l'employé").
 
 ## 13. Sauvegardes
 
