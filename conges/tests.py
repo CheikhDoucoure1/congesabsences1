@@ -165,8 +165,8 @@ class SoldeInsuffisantTests(TestCase):
 
     def setUp(self):
         self.type_conge = _type_conge()
-        chef = _employe('chef_sarah', role='employe')
-        self.employe = _employe('sarah', role='employe', manager=chef)
+        self.chef = _employe('chef_sarah', role='employe')
+        self.employe = _employe('sarah', role='employe', manager=self.chef)
         SoldeConge.objects.create(
             employe=self.employe, type_conge=self.type_conge, annee=date.today().year,
             jours_acquis=24, jours_pris=22,  # il ne reste que 2 jours
@@ -178,6 +178,7 @@ class SoldeInsuffisantTests(TestCase):
             'type_conge': self.type_conge.id,
             'date_debut': debut.isoformat(),
             'date_fin': fin.isoformat(),
+            'superieur': self.chef.id,
         })
 
     def test_demande_qui_depasse_le_solde_est_refusee(self):
@@ -213,6 +214,7 @@ class SoldeInsuffisantTests(TestCase):
             'type_conge': self.type_conge.id,
             'date_debut': debut.isoformat(),
             'date_fin': fin.isoformat(),
+            'superieur': chef.id,
         })
         self.assertTrue(DemandeConge.objects.filter(employe=autre).exists())
 
@@ -296,9 +298,9 @@ class ModifierEmployeTests(TestCase):
 
 
 class DeclarationSuperieurTests(TestCase):
-    """Un employé sans manager assigné (typiquement un compte LDAP tout
-    juste auto-créé) doit pouvoir en indiquer un à sa première demande —
-    mais jamais en changer une fois qu'il en a déjà un."""
+    """Chaque demande (tous types confondus) demande de confirmer ou changer
+    son supérieur direct — obligatoire, pré-rempli avec la valeur actuelle,
+    modifiable à chaque soumission."""
 
     def setUp(self):
         self.type_conge = _type_conge()
@@ -307,8 +309,8 @@ class DeclarationSuperieurTests(TestCase):
         self.rh = _employe('rh_verif', role='rh')
         self.sans_manager = _employe('nouveau_ldap', role='employe')  # manager=None
 
-    def _dates_valides(self):
-        debut = date.today() + timedelta(days=10)
+    def _dates_valides(self, decalage=10):
+        debut = date.today() + timedelta(days=decalage)
         while debut.weekday() >= 5:
             debut += timedelta(days=1)
         fin = debut + timedelta(days=1)
@@ -316,17 +318,17 @@ class DeclarationSuperieurTests(TestCase):
             fin += timedelta(days=1)
         return debut, fin
 
-    def test_champ_requis_si_pas_de_manager(self):
+    def test_champ_requis(self):
         self.client.force_login(self.sans_manager)
         debut, fin = self._dates_valides()
-        # Pas de "superieur" fourni -> refusé
+        # Pas de "superieur" fourni -> refusé, même pour un employé qui en a déjà un.
         self.client.post(reverse('nouvelle_demande'), {
             'type_conge': self.type_conge.id,
             'date_debut': debut.isoformat(), 'date_fin': fin.isoformat(),
         })
         self.assertFalse(DemandeConge.objects.filter(employe=self.sans_manager).exists())
 
-    def test_superieur_declare_devient_le_manager_permanent(self):
+    def test_superieur_choisi_devient_le_manager_courant(self):
         self.client.force_login(self.sans_manager)
         debut, fin = self._dates_valides()
         self.client.post(reverse('nouvelle_demande'), {
@@ -343,18 +345,17 @@ class DeclarationSuperieurTests(TestCase):
             ).exists()
         )
         # Le RH est notifié pour pouvoir vérifier/corriger.
-        self.assertTrue(self.rh.notifications.filter(titre__icontains='Supérieur déclaré').exists())
+        self.assertTrue(self.rh.notifications.filter(titre__icontains='Supérieur changé').exists())
 
-    def test_le_champ_napparait_plus_une_fois_le_manager_fixe(self):
+    def test_le_champ_reste_present_et_prerempli_une_fois_un_superieur_fixe(self):
         self.sans_manager.manager = self.chef
         self.sans_manager.save()
         self.client.force_login(self.sans_manager)
         resp = self.client.get(reverse('nouvelle_demande'))
-        self.assertNotContains(resp, 'name="superieur"')
+        self.assertContains(resp, 'name="superieur"')
+        self.assertContains(resp, f'value="{self.chef.id}" selected')
 
-    def test_impossible_de_changer_de_manager_via_ce_formulaire(self):
-        # Un employé qui a déjà un manager ne peut pas en indiquer un autre
-        # via ce champ — il n'est simplement jamais proposé/pris en compte.
+    def test_peut_changer_de_superieur_a_chaque_demande(self):
         self.sans_manager.manager = self.chef
         self.sans_manager.save()
         self.client.force_login(self.sans_manager)
@@ -365,4 +366,19 @@ class DeclarationSuperieurTests(TestCase):
             'superieur': self.autre_chef.id,
         })
         self.sans_manager.refresh_from_db()
-        self.assertEqual(self.sans_manager.manager_id, self.chef.id)  # inchangé
+        self.assertEqual(self.sans_manager.manager_id, self.autre_chef.id)  # a bien changé
+
+    def test_aucun_historique_ni_notification_si_le_superieur_ne_change_pas(self):
+        self.sans_manager.manager = self.chef
+        self.sans_manager.save()
+        self.client.force_login(self.sans_manager)
+        debut, fin = self._dates_valides()
+        self.client.post(reverse('nouvelle_demande'), {
+            'type_conge': self.type_conge.id,
+            'date_debut': debut.isoformat(), 'date_fin': fin.isoformat(),
+            'superieur': self.chef.id,  # même valeur que déjà en base
+        })
+        self.assertFalse(
+            HistoriqueModification.objects.filter(employe_concerne=self.sans_manager, type_action='employe_modifie').exists()
+        )
+        self.assertFalse(self.rh.notifications.filter(titre__icontains='Supérieur changé').exists())

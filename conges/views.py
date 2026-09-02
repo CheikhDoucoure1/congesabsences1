@@ -194,17 +194,13 @@ def nouvelle_demande(request):
     soldes = {s.type_conge_id: s for s in soldes_qs}
     soldes_json = {str(s.type_conge_id): float(s.jours_restants) for s in soldes_qs}
     employes_liste = Employe.objects.filter(actif=True).exclude(id=user.id).order_by('last_name', 'first_name')
-    # Only relevant for someone with no supérieur registered yet (typically
-    # a brand-new LDAP-provisioned account) — an employee who already has
-    # one never sees or touches this; changing an existing manager stays
-    # exclusively an RH action via /administration/.
-    superieurs_possibles = None
-    if not user.manager_id:
-        # Anyone active can be a supérieur — it's not a role, it's just
-        # whoever the org chart says this employee reports to.
-        superieurs_possibles = Employe.objects.filter(
-            actif=True
-        ).exclude(id=user.id).order_by('last_name', 'first_name')
+    # Shown and required on every request, whatever the type — the employee
+    # confirms or changes their supérieur direct each time (pre-filled with
+    # whoever is currently on file). Anyone active can be picked, it's not
+    # tied to a role.
+    superieurs_possibles = Employe.objects.filter(
+        actif=True
+    ).exclude(id=user.id).order_by('last_name', 'first_name')
 
     if request.method == 'POST':
         type_id = request.POST.get('type_conge')
@@ -224,15 +220,14 @@ def nouvelle_demande(request):
         if not date_fin_str:
             errors.append("La date de fin est requise.")
 
-        superieur_choisi = None
-        if superieurs_possibles is not None:
-            superieur_id = request.POST.get('superieur')
-            if not superieur_id:
-                errors.append("Indiquez votre supérieur direct — c'est nécessaire pour que votre demande soit transmise.")
-            else:
-                superieur_choisi = superieurs_possibles.filter(id=superieur_id).first()
-                if not superieur_choisi:
-                    errors.append("Supérieur invalide.")
+        superieur_id = request.POST.get('superieur')
+        if not superieur_id:
+            errors.append("Indiquez votre supérieur direct — c'est nécessaire pour que votre demande soit transmise.")
+            superieur_choisi = None
+        else:
+            superieur_choisi = superieurs_possibles.filter(id=superieur_id).first()
+            if not superieur_choisi:
+                errors.append("Supérieur invalide.")
 
         type_conge_obj = None
         if type_id:
@@ -288,11 +283,12 @@ def nouvelle_demande(request):
                             )
 
                     if not errors:
-                        if superieur_choisi:
-                            # Devient le vrai supérieur de l'employé de façon
-                            # permanente (pas juste pour cette demande) — un
-                            # employé sans manager assigné ne repassera plus
-                            # par cette étape ensuite.
+                        # Confirmé/changé à chaque demande — met à jour le
+                        # supérieur direct de l'employé seulement si ça
+                        # change réellement, pour ne pas générer d'historique
+                        # ni de notification à chaque soumission identique.
+                        if superieur_choisi.id != user.manager_id:
+                            ancien_superieur = user.manager
                             user.manager = superieur_choisi
                             user.save(update_fields=['manager'])
                             HistoriqueModification.objects.create(
@@ -301,13 +297,14 @@ def nouvelle_demande(request):
                                 employe_concerne=user,
                                 description=(
                                     f"{user.get_full_name()} a indiqué {superieur_choisi.get_full_name()} "
-                                    f"comme supérieur direct (déclaration à la première demande)."
+                                    f"comme supérieur direct (changé lors d'une demande ; précédemment : "
+                                    f"{ancien_superieur.get_full_name() if ancien_superieur else '—'})."
                                 ),
                             )
                             for rh in Employe.objects.filter(role__in=['rh', 'admin'], actif=True):
                                 Notification.objects.create(
                                     destinataire=rh,
-                                    titre="Supérieur déclaré par un employé",
+                                    titre="Supérieur changé par un employé",
                                     message=(
                                         f"{user.get_full_name()} a indiqué {superieur_choisi.get_full_name()} "
                                         f"comme supérieur direct. Vérifiez et corrigez si besoin."
