@@ -29,6 +29,26 @@
 
       <!-- STEP 1: Type Selection -->
       <div class="form-step" id="step-1">
+        <div class="card mb-3">
+          <div class="card-header">
+            <h3><i class="fas fa-user-tie"></i> Votre supérieur direct</h3>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label required">Qui doit approuver cette demande ?</label>
+              <select name="superieur" id="superieurSelect" class="form-control" required>
+                <option value="">— Sélectionner —</option>
+                {% for s in superieurs_possibles %}
+                <option value="{{ s.id }}" {% if s.id == request.user.manager_id %}selected{% endif %}>{{ s.get_full_name }}</option>
+                {% endfor %}
+              </select>
+              <small class="form-hint">
+                Confirmez ou changez votre supérieur direct — c'est lui qui recevra la notification et devra approuver.
+              </small>
+              <div id="superieur-error" class="field-error hidden">Indiquez votre supérieur direct.</div>
+            </div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-header">
             <h3><i class="fas fa-tag"></i> Choisissez le type de congé</h3>
@@ -203,19 +223,10 @@
                 <span class="recap-label"><i class="fas fa-user-clock"></i> Intérimaire</span>
                 <span class="recap-value" id="recapInterimaire">—</span>
               </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label required">Votre supérieur direct</label>
-              <select name="superieur" class="form-control" required>
-                <option value="">— Sélectionner —</option>
-                {% for s in superieurs_possibles %}
-                <option value="{{ s.id }}" {% if s.id == request.user.manager_id %}selected{% endif %}>{{ s.get_full_name }}</option>
-                {% endfor %}
-              </select>
-              <small class="form-hint">
-                C'est cette personne qui recevra la notification et devra approuver cette demande.
-              </small>
+              <div class="recap-item recap-full">
+                <span class="recap-label"><i class="fas fa-user-tie"></i> Supérieur direct</span>
+                <span class="recap-value" id="recapSuperieur">—</span>
+              </div>
             </div>
 
             <div class="confirm-notice">
@@ -276,6 +287,14 @@ function goToStep(step) {
 }
 
 function validateStep1() {
+  const superieurSelect = document.getElementById('superieurSelect');
+  if (!superieurSelect.value) {
+    document.getElementById('superieur-error').classList.remove('hidden');
+    superieurSelect.focus();
+    return false;
+  }
+  document.getElementById('superieur-error').classList.add('hidden');
+
   const selected = document.querySelector('input[name="type_conge"]:checked');
   if (!selected) {
     document.getElementById('type-error').classList.remove('hidden');
@@ -322,6 +341,9 @@ function fillRecap() {
   const interimNom = interimaireSelect.value ? interimaireSelect.options[interimaireSelect.selectedIndex].text : '—';
   const isAbsence = typeEl && typeEl.dataset.categorie === 'absence';
 
+  const superieurSelect = document.getElementById('superieurSelect');
+  const superieurNom = superieurSelect.value ? superieurSelect.options[superieurSelect.selectedIndex].text : '—';
+
   document.getElementById('recapType').textContent = typeName;
   document.getElementById('recapDebut').textContent = debut ? formatDateFr(debut) : '—';
   document.getElementById('recapFin').textContent = fin ? formatDateFr(fin) : '—';
@@ -329,6 +351,7 @@ function fillRecap() {
   document.getElementById('recapMotifRow').style.display = isAbsence ? '' : 'none';
   document.getElementById('recapMotif').textContent = motif || '—';
   document.getElementById('recapInterimaire').textContent = interimNom;
+  document.getElementById('recapSuperieur').textContent = superieurNom;
 }
 
 function formatDateFr(isoDate) {
