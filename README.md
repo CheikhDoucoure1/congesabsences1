@@ -317,17 +317,32 @@ détail des variables), dans `.env` :
 
 ```ini
 DJANGO_LDAP_ENABLED=True
-DJANGO_LDAP_SERVER_URI=ldaps://PETROSEN-SRV-DC1.PETROSEN.SN:636
+DJANGO_LDAP_SERVER_URI=ldap://PETROSEN-SRV-DC1.PETROSEN.SN:389
 DJANGO_LDAP_BASE_DN=DC=PETROSEN,DC=SN
 DJANGO_LDAP_BIND_DN=PETROSEN\adminclb
 DJANGO_LDAP_BIND_PASSWORD=<mot-de-passe-reel-du-compte-de-service>
 ```
 
-Vérifiez que le serveur peut atteindre le contrôleur de domaine (port 636
-en LDAPS) avant de redémarrer le service :
+⚠️ **LDAP en clair, pas LDAPS.** Le contrôleur de domaine `PETROSEN-SRV-DC1`
+n'expose pas le port 636 (confirmé après plusieurs tests réseau et
+`ldapsearch` en diagnostic réel) — seul le 389 en clair répond. Les mots de
+passe transitent donc non chiffrés sur ce trajet réseau. Si votre IT
+confirme un jour que le contrôleur de domaine supporte **STARTTLS** sur ce
+même port 389 (à vérifier avec `ldapsearch -ZZ ...` ou directement avec
+eux), activez :
+
+```ini
+DJANGO_LDAP_START_TLS=True
+```
+
+et testez dans une fenêtre de maintenance — un DC qui ne le supporte pas
+ferait à nouveau échouer toutes les connexions.
+
+Vérifiez que le serveur peut atteindre le contrôleur de domaine sur le bon
+port avant de redémarrer le service :
 
 ```bash
-sudo -u deploy nc -zv PETROSEN-SRV-DC1.PETROSEN.SN 636
+sudo -u deploy nc -zv PETROSEN-SRV-DC1.PETROSEN.SN 389
 sudo systemctl restart conges-absences
 ```
 
@@ -340,33 +355,40 @@ Si la connexion échoue, remontez cette liste dans l'ordre — chaque étape
 isole une cause différente sans dépendre des précédentes.
 
 **1. Le réseau.** Le serveur joint-il le contrôleur de domaine sur le bon
-port ?
+port ? (389 en clair chez PETROSEN — testez le vôtre en premier avant de
+supposer que c'est le même cas.)
 
 ```bash
-sudo -u deploy nc -zv PETROSEN-SRV-DC1.PETROSEN.SN 636
+sudo -u deploy nc -zv PETROSEN-SRV-DC1.PETROSEN.SN 389
 ```
 
 Si ça échoue : pare-feu, DNS, ou le serveur n'est simplement pas sur le
 même réseau que l'AD. Rien côté application ne peut compenser ça.
 
-**2. Le certificat TLS.** La poignée de main LDAPS aboutit-elle ?
+**2. Si vous testez LDAPS (636) ou STARTTLS, le certificat TLS.** La
+poignée de main aboutit-elle ?
 
 ```bash
 openssl s_client -connect PETROSEN-SRV-DC1.PETROSEN.SN:636 -showcerts </dev/null
+# ou, pour STARTTLS sur le port 389 :
+openssl s_client -starttls ldap -connect PETROSEN-SRV-DC1.PETROSEN.SN:389 -showcerts </dev/null
 ```
 
 Cherchez `Verify return code: 0 (ok)` à la fin. Une erreur de certificat ici
 (autorité inconnue, nom ne correspondant pas) confirme que vous avez besoin
 de la variable `DJANGO_LDAP_CA_CERT_FILE` vue plus haut — jamais de contournement en
-désactivant la validation.
+désactivant la validation. **Étape à sauter si vous êtes en LDAP simple
+(389, sans STARTTLS) comme la config par défaut ci-dessus** — il n'y a pas
+de TLS à négocier dans ce cas.
 
 **3. Le bind et la recherche, indépendamment de Django.** Isole si le
 problème vient du compte de service / de la base de recherche / du filtre,
-avant même de faire intervenir l'application :
+avant même de faire intervenir l'application — **utilisez le même port et
+protocole que `DJANGO_LDAP_SERVER_URI` dans votre `.env`**, pas un autre :
 
 ```bash
 sudo apt install -y ldap-utils   # ldapsearch — outil de diagnostic uniquement
-ldapsearch -H ldaps://PETROSEN-SRV-DC1.PETROSEN.SN:636 \
+ldapsearch -H ldap://PETROSEN-SRV-DC1.PETROSEN.SN:389 \
   -D 'PETROSEN\adminclb' -W \
   -b 'DC=PETROSEN,DC=SN' \
   '(sAMAccountName=<login-dun-vrai-compte-de-test>)'

@@ -163,8 +163,14 @@ if AUTH_LDAP_ENABLED:
     import ldap
     from django_auth_ldap.config import LDAPSearch
 
+    # Plain LDAP on 389 — this DC doesn't have LDAPS (636) available/open.
+    # Credentials travel unencrypted on this connection unless
+    # DJANGO_LDAP_START_TLS=True and the DC actually supports STARTTLS on
+    # 389 (worth asking IT to check — it upgrades this same connection to
+    # TLS without needing a separate 636 listener). Until then this is a
+    # known, accepted risk on the internal network this runs on.
     AUTH_LDAP_SERVER_URI = os.environ.get(
-        'DJANGO_LDAP_SERVER_URI', 'ldaps://PETROSEN-SRV-DC1.PETROSEN.SN:636'
+        'DJANGO_LDAP_SERVER_URI', 'ldap://PETROSEN-SRV-DC1.PETROSEN.SN:389'
     )
     AUTH_LDAP_BIND_DN = os.environ.get('DJANGO_LDAP_BIND_DN', r'PETROSEN\adminclb')
     AUTH_LDAP_BIND_PASSWORD = os.environ.get('DJANGO_LDAP_BIND_PASSWORD', '')
@@ -199,6 +205,14 @@ if AUTH_LDAP_ENABLED:
         'email': 'mail',
     }
     AUTH_LDAP_ALWAYS_UPDATE_USER = True
+
+    # Opt-in: upgrades the plain-389 connection above to TLS via the
+    # STARTTLS extension, if the DC supports it — encrypts credentials
+    # without needing a separate LDAPS/636 listener. Off by default since
+    # it hasn't been confirmed available; test it in a maintenance window
+    # before flipping it on (a DC that doesn't support it will just make
+    # every login fail again).
+    AUTH_LDAP_START_TLS = _env_bool('DJANGO_LDAP_START_TLS', False)
 
     AUTH_LDAP_CONNECTION_OPTIONS = {
         ldap.OPT_REFERRALS: 0,        # required against Active Directory
