@@ -192,7 +192,7 @@
         </div>
       </div>
     </div>
-    {% elif request.user.role == 'manager' and demande.statut == 'en_attente' %}
+    {% elif demande.employe.manager_id == request.user.id and demande.statut == 'en_attente' %}
     <div class="detail-sidebar">
       <div class="card">
         <div class="card-header"><h3>Décision</h3></div>

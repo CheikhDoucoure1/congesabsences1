@@ -151,9 +151,11 @@
               <label class="form-label">Rôle</label>
               <select name="role" class="form-control">
                 <option value="employe">Employé</option>
-                <option value="manager">Manager</option>
                 <option value="rh">Responsable RH</option>
+                {% if request.user.role == 'admin' %}
+                <option value="dg">Directeur Général</option>
                 <option value="admin">Administrateur</option>
+                {% endif %}
               </select>
             </div>
           </div>
@@ -166,7 +168,7 @@
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">Manager direct</label>
+              <label class="form-label">Supérieur direct</label>
               <select name="manager" class="form-control">
                 <option value="">— Aucun —</option>
                 {% for emp in employes %}<option value="{{ emp.id }}">{{ emp.get_full_name }}</option>{% endfor %}
@@ -175,8 +177,8 @@
           </div>
           <div class="form-group">
             <label class="form-label">Mot de passe initial</label>
-            <input type="text" name="password" class="form-control" value="Petrosen2025!" placeholder="Mot de passe temporaire">
-            <small class="text-muted">L'employé devra le changer à sa première connexion.</small>
+            <input type="text" name="password" class="form-control" placeholder="Laisser vide pour générer un mot de passe aléatoire sécurisé">
+            <small class="text-muted">Si laissé vide, un mot de passe aléatoire est généré et affiché une fois l'employé créé.</small>
           </div>
         </div>
 

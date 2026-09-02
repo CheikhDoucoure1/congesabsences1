@@ -96,8 +96,12 @@ class Command(BaseCommand):
         drh = make_user('drh', 'drh@petrosen.sn', 'password',
                         'Aïssatou', 'Ndiaye', 'rh', 'DRH', 'Directrice des Ressources Humaines',
                         manager=dg)
+        # role='employe' on purpose: being someone's supérieur is not a
+        # role in this app, it's just having subordonnes (see
+        # Employe.is_manager_or_above) — Ibrahim gets his approval
+        # authority from employe/emp4 pointing their `manager` FK at him.
         manager = make_user('manager', 'manager@petrosen.sn', 'password',
-                            'Ibrahim', 'Diop', 'manager', 'PROD',
+                            'Ibrahim', 'Diop', 'employe', 'PROD',
                             'Chef de Département Production', manager=drh)
         employe = make_user('employe', 'employe@petrosen.sn', 'password',
                             'Mariama', 'Ba', 'employe', 'PROD',

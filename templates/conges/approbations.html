@@ -89,7 +89,7 @@
                         onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'rejeter')">
                   <i class="fas fa-times"></i>
                 </button>
-                {% elif request.user.role == 'manager' and d.statut == 'en_attente' %}
+                {% elif d.employe.manager_id == request.user.id and d.statut == 'en_attente' %}
                 <button class="btn-icon-sm btn-success-icon" title="Valider (transmettre au RH)"
                         onclick="openTraitement({{ d.id }}, '{{ d.reference }}', 'approuver')">
                   <i class="fas fa-check"></i>

@@ -403,7 +403,6 @@
             <label class="form-label">Rôle</label>
             <select name="role" class="form-control">
               <option value="employe">Employé</option>
-              <option value="manager">Manager</option>
               <option value="rh">Responsable RH</option>
               {% if request.user.role == 'admin' %}
               <option value="dg">Directeur Général</option>
@@ -421,15 +420,14 @@
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Manager direct</label>
+            <label class="form-label">Supérieur direct</label>
             <select name="manager" class="form-control">
               <option value="">— Aucun —</option>
               {% for emp in employes %}
-              {% if emp.role in 'manager,rh,admin' %}
               <option value="{{ emp.id }}">{{ emp.get_full_name }}</option>
-              {% endif %}
               {% endfor %}
             </select>
+            <small class="form-hint">N'importe quel employé actif peut être le supérieur de quelqu'un — ce n'est pas un rôle particulier.</small>
           </div>
         </div>
         <div class="form-group">

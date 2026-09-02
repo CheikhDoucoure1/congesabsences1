@@ -21,7 +21,6 @@ class Departement(models.Model):
 class Employe(AbstractUser):
     ROLE_CHOICES = [
         ('employe', 'Employé'),
-        ('manager', 'Manager'),
         ('rh', 'Responsable RH'),
         ('dg', 'Directeur Général'),
         ('admin', 'Administrateur'),
@@ -55,7 +54,11 @@ class Employe(AbstractUser):
 
     @property
     def is_manager_or_above(self):
-        return self.role in ('manager', 'rh', 'dg', 'admin')
+        # Approval authority at the first-line "supérieur" stage is not a
+        # role — it's purely a fact of the org chart: anyone with at least
+        # one direct report can act on their requests, whatever their own
+        # role is. rh/dg/admin always have it too (company-wide oversight).
+        return self.role in ('rh', 'dg', 'admin') or self.subordonnes.exists()
 
     @property
     def is_dg(self):
@@ -150,7 +153,7 @@ class CongeSupplementaire(models.Model):
 class DemandeConge(models.Model):
     STATUT_CHOICES = [
         ('en_attente', 'En attente'),
-        ('validee_manager', 'Validée par le manager - en attente du RH'),
+        ('validee_manager', 'Validée par le supérieur direct - en attente du RH'),
         ('validee', 'Validée par le RH - en attente du DG'),
         ('approuve', 'Approuvé'),
         ('rejete', 'Rejeté'),

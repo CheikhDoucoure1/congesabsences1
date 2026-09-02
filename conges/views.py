@@ -32,8 +32,10 @@ LOGIN_BLOCAGE_SECONDES = 300
 
 # Roles a non-admin (rh) user is allowed to grant when creating/importing
 # employees. Only an existing admin account can mint another admin or set
-# someone as dg.
-ROLES_ATTRIBUABLES_PAR_RH = {'employe', 'manager', 'rh'}
+# someone as dg. There is no 'manager' role to grant — see
+# Employe.is_manager_or_above: approval authority at that level comes from
+# the `manager` FK (who reports to whom), not from a role.
+ROLES_ATTRIBUABLES_PAR_RH = {'employe', 'rh'}
 
 
 def _int_ou(valeur, defaut):
@@ -54,19 +56,20 @@ def _roles_autorises_pour(user):
 def _demande_visible_ou_404(user, demande_id):
     """Fetch a DemandeConge, scoped to what `user` is allowed to see.
 
-    - employe : only their own requests.
-    - manager : their own requests + their direct team's (never another
-      manager's team — this is the whole point of the scoping; without it
-      any manager could view/act on any employee's request by guessing IDs).
+    - employe (no direct reports) : only their own requests.
+    - anyone who has direct reports (whatever their `role`) : their own
+      requests + their direct team's — never another supérieur's team, this
+      is the whole point of the scoping; without it anyone could view/act
+      on any employee's request by guessing IDs.
     - rh / dg / admin : full visibility by design (they oversee everyone).
     """
-    if user.role == 'manager':
+    if user.role in ('rh', 'dg', 'admin'):
+        return get_object_or_404(DemandeConge, id=demande_id)
+    if user.is_manager_or_above:  # a plain employee who happens to have subordonnes
         return get_object_or_404(
             DemandeConge,
             Q(id=demande_id) & (Q(employe__in=user.subordonnes.all()) | Q(employe=user))
         )
-    if user.is_manager_or_above:  # rh, dg, admin
-        return get_object_or_404(DemandeConge, id=demande_id)
     return get_object_or_404(DemandeConge, id=demande_id, employe=user)
 
 
@@ -150,16 +153,16 @@ def tableau_de_bord(request):
     a_approuver = 0
     demandes_equipe = []
     if user.is_manager_or_above:
-        if user.role == 'manager':
-            equipe_ids = user.subordonnes.values_list('id', flat=True)
-            a_approuver = DemandeConge.objects.filter(
-                employe__in=equipe_ids, statut='en_attente'
-            ).count()
-        elif user.role == 'dg':
+        if user.role == 'dg':
             a_approuver = DemandeConge.objects.filter(statut='validee').count()
         elif user.role in ('rh', 'admin'):
             a_approuver = DemandeConge.objects.filter(
                 statut__in=['en_attente', 'validee_manager']
+            ).count()
+        else:  # a plain employee who happens to have subordonnes
+            equipe_ids = user.subordonnes.values_list('id', flat=True)
+            a_approuver = DemandeConge.objects.filter(
+                employe__in=equipe_ids, statut='en_attente'
             ).count()
 
         demandes_equipe = DemandeConge.objects.filter(
@@ -191,6 +194,17 @@ def nouvelle_demande(request):
     soldes = {s.type_conge_id: s for s in soldes_qs}
     soldes_json = {str(s.type_conge_id): float(s.jours_restants) for s in soldes_qs}
     employes_liste = Employe.objects.filter(actif=True).exclude(id=user.id).order_by('last_name', 'first_name')
+    # Only relevant for someone with no supérieur registered yet (typically
+    # a brand-new LDAP-provisioned account) — an employee who already has
+    # one never sees or touches this; changing an existing manager stays
+    # exclusively an RH action via /administration/.
+    superieurs_possibles = None
+    if not user.manager_id:
+        # Anyone active can be a supérieur — it's not a role, it's just
+        # whoever the org chart says this employee reports to.
+        superieurs_possibles = Employe.objects.filter(
+            actif=True
+        ).exclude(id=user.id).order_by('last_name', 'first_name')
 
     if request.method == 'POST':
         type_id = request.POST.get('type_conge')
@@ -209,6 +223,16 @@ def nouvelle_demande(request):
             errors.append("La date de début est requise.")
         if not date_fin_str:
             errors.append("La date de fin est requise.")
+
+        superieur_choisi = None
+        if superieurs_possibles is not None:
+            superieur_id = request.POST.get('superieur')
+            if not superieur_id:
+                errors.append("Indiquez votre supérieur direct — c'est nécessaire pour que votre demande soit transmise.")
+            else:
+                superieur_choisi = superieurs_possibles.filter(id=superieur_id).first()
+                if not superieur_choisi:
+                    errors.append("Supérieur invalide.")
 
         type_conge_obj = None
         if type_id:
@@ -264,6 +288,33 @@ def nouvelle_demande(request):
                             )
 
                     if not errors:
+                        if superieur_choisi:
+                            # Devient le vrai supérieur de l'employé de façon
+                            # permanente (pas juste pour cette demande) — un
+                            # employé sans manager assigné ne repassera plus
+                            # par cette étape ensuite.
+                            user.manager = superieur_choisi
+                            user.save(update_fields=['manager'])
+                            HistoriqueModification.objects.create(
+                                type_action='employe_modifie',
+                                auteur=user,
+                                employe_concerne=user,
+                                description=(
+                                    f"{user.get_full_name()} a indiqué {superieur_choisi.get_full_name()} "
+                                    f"comme supérieur direct (déclaration à la première demande)."
+                                ),
+                            )
+                            for rh in Employe.objects.filter(role__in=['rh', 'admin'], actif=True):
+                                Notification.objects.create(
+                                    destinataire=rh,
+                                    titre="Supérieur déclaré par un employé",
+                                    message=(
+                                        f"{user.get_full_name()} a indiqué {superieur_choisi.get_full_name()} "
+                                        f"comme supérieur direct. Vérifiez et corrigez si besoin."
+                                    ),
+                                    lien=f"/administration/employes/{user.id}/modifier/",
+                                )
+
                         if justificatif:
                             demande.justificatif = justificatif
                         demande.save()
@@ -285,6 +336,7 @@ def nouvelle_demande(request):
         'soldes': soldes,
         'soldes_json': soldes_json,
         'employes_liste': employes_liste,
+        'superieurs_possibles': superieurs_possibles,
         'today': date.today().isoformat(),
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
     }
@@ -485,11 +537,11 @@ def approbations(request):
 
     statut_filtre = request.GET.get('statut', 'validee' if user.is_dg else 'en_attente')
 
-    if user.role == 'manager':
+    if user.role in ('rh', 'dg', 'admin'):
+        base_qs = DemandeConge.objects.all()
+    else:  # a plain employee who happens to have subordonnes
         equipe_ids = user.subordonnes.values_list('id', flat=True)
         base_qs = DemandeConge.objects.filter(employe__in=equipe_ids)
-    else:
-        base_qs = DemandeConge.objects.all()
 
     demandes = base_qs.select_related('employe', 'type_conge', 'traite_par', 'valide_par', 'valide_par_rh')
     if statut_filtre:
@@ -689,15 +741,15 @@ def traiter_demande(request, demande_id):
     if not user.is_manager_or_above:
         return JsonResponse({'error': 'Non autorisé'}, status=403)
 
-    if user.role == 'manager':
-        # A manager may only act on their own team's requests — without this
-        # filter any manager could approve/reject anyone's request by
-        # guessing the demande_id in the URL.
+    if user.role in ('rh', 'dg', 'admin'):
+        demande = get_object_or_404(DemandeConge, id=demande_id)
+    else:
+        # A plain employee acting as someone's supérieur may only act on
+        # their own team's requests — without this filter anyone could
+        # approve/reject any request by guessing the demande_id in the URL.
         demande = get_object_or_404(
             DemandeConge, id=demande_id, employe__in=user.subordonnes.all()
         )
-    else:
-        demande = get_object_or_404(DemandeConge, id=demande_id)
 
     if demande.employe_id == user.id:
         messages.error(request, "Vous ne pouvez pas traiter votre propre demande.")
@@ -714,8 +766,12 @@ def traiter_demande(request, demande_id):
         messages.error(request, "Action invalide.")
         return redirect('approbations')
 
+    # Not a role — whoever the org chart says is this employee's direct
+    # supérieur, whatever their own `role` happens to be.
+    est_le_superieur_direct = demande.employe.manager_id == user.id
+
     if not user.is_dg:
-        if user.role == 'manager' and demande.statut != 'en_attente':
+        if est_le_superieur_direct and demande.statut != 'en_attente':
             messages.error(request, "Cette demande n'est plus en attente de votre validation.")
             return redirect('approbations')
         if user.role in ('rh', 'admin') and demande.statut not in ('en_attente', 'validee_manager'):
@@ -741,7 +797,7 @@ def traiter_demande(request, demande_id):
         _mettre_a_jour_solde(demande)
         _notifier_employe(demande, 'approuve', commentaire)
         messages.success(request, f"La demande {demande.reference} a été définitivement approuvée.")
-    elif user.role == 'manager':
+    elif est_le_superieur_direct:
         demande.statut = 'validee_manager'
         demande.valide_par = user
         demande.date_validation = timezone.now()
@@ -801,10 +857,10 @@ def equipe(request):
         messages.error(request, "Accès non autorisé.")
         return redirect('tableau_de_bord')
 
-    if user.role == 'manager':
-        employes = Employe.objects.filter(manager=user, actif=True).select_related('departement')
-    else:
+    if user.role in ('rh', 'dg', 'admin'):
         employes = Employe.objects.filter(actif=True).select_related('departement', 'manager')
+    else:  # a plain employee who happens to have subordonnes
+        employes = Employe.objects.filter(manager=user, actif=True).select_related('departement')
 
     annee = date.today().year
     aujourd_hui = date.today()
@@ -814,7 +870,7 @@ def equipe(request):
         date_fin__gte=aujourd_hui,
     ).select_related('employe', 'type_conge')
 
-    if user.role == 'manager':
+    if user.role not in ('rh', 'dg', 'admin'):
         equipe_ids = user.subordonnes.values_list('id', flat=True)
         absents_aujourd_hui = absents_aujourd_hui.filter(employe__in=equipe_ids)
 
@@ -837,7 +893,7 @@ def historique_modifications(request):
     historique = HistoriqueModification.objects.select_related(
         'auteur', 'employe_concerne', 'demande'
     )
-    if user.role == 'manager':
+    if user.role not in ('rh', 'dg', 'admin'):  # a plain employee who happens to have subordonnes
         equipe_ids = list(user.subordonnes.values_list('id', flat=True))
         historique = historique.filter(employe_concerne_id__in=equipe_ids)
 
@@ -1333,7 +1389,7 @@ def importer_employes(request):
         manager_email = col(row, 'manager')
         password_col  = col(row, 'mot de passe')
 
-        if role not in ('employe', 'manager', 'rh', 'admin', 'dg'):
+        if role not in ('employe', 'rh', 'admin', 'dg'):
             role = 'employe'
         if role not in roles_autorises:
             # rh accounts may not grant admin/dg via a spreadsheet either.
@@ -1456,10 +1512,10 @@ def telecharger_template_employes(request):
     # Feuille aide
     ws2 = wb.create_sheet("Aide")
     ws2['A1'] = "Valeurs acceptées pour la colonne Role :"
-    ws2['A2'] = "employe  |  manager  |  rh  |  admin"
+    ws2['A2'] = "employe  |  rh  |  dg  |  admin"
     ws2['A3'] = "(un compte RH important le fichier ne peut pas s'attribuer ou attribuer 'admin'/'dg' — réservé aux administrateurs)"
     ws2['A5'] = "Colonne Departement : code (DG, DRH, DEP, FIN, HSE, JUR, DSI, LOG) ou nom complet"
-    ws2['A7'] = "Colonne Manager : email du manager direct (doit exister dans le système)"
+    ws2['A7'] = "Colonne Manager : email du supérieur direct (doit exister dans le système) — n'importe quel employé actif peut être le supérieur de quelqu'un, ce n'est pas un rôle particulier"
     ws2['A9'] = "Mot de passe : laissez vide pour générer un mot de passe aléatoire sécurisé par employé (affiché après import, à transmettre individuellement)"
 
     response = HttpResponse(

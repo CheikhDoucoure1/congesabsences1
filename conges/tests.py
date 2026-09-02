@@ -40,8 +40,8 @@ class AccessControlTests(TestCase):
     def setUp(self):
         self.type_conge = _type_conge()
         self.drh = _employe('drh', role='rh')
-        self.manager_a = _employe('manager_a', role='manager', manager=self.drh)
-        self.manager_b = _employe('manager_b', role='manager', manager=self.drh)
+        self.manager_a = _employe('manager_a', role='employe', manager=self.drh)
+        self.manager_b = _employe('manager_b', role='employe', manager=self.drh)
         self.emp_a = _employe('emp_a', role='employe', manager=self.manager_a)
         self.emp_b = _employe('emp_b', role='employe', manager=self.manager_b)
         self.demande_b = DemandeConge.objects.create(
@@ -165,7 +165,8 @@ class SoldeInsuffisantTests(TestCase):
 
     def setUp(self):
         self.type_conge = _type_conge()
-        self.employe = _employe('sarah', role='employe')
+        chef = _employe('chef_sarah', role='employe')
+        self.employe = _employe('sarah', role='employe', manager=chef)
         SoldeConge.objects.create(
             employe=self.employe, type_conge=self.type_conge, annee=date.today().year,
             jours_acquis=24, jours_pris=22,  # il ne reste que 2 jours
@@ -199,7 +200,8 @@ class SoldeInsuffisantTests(TestCase):
     def test_aucun_solde_initialise_nempeche_pas_la_demande(self):
         # Un nouvel employé sans solde encore initialisé ne doit pas être
         # bloqué — c'est un problème de configuration RH, pas une fraude.
-        autre = _employe('nouveau', role='employe')
+        chef = _employe('chef_nouveau', role='employe')
+        autre = _employe('nouveau', role='employe', manager=chef)
         self.client.force_login(autre)
         debut = date.today() + timedelta(days=10)
         while debut.weekday() >= 5:
@@ -223,7 +225,7 @@ class ModifierEmployeTests(TestCase):
         self.admin = _employe('un_admin', role='admin')
         self.rh = _employe('un_rh', role='rh')
         self.dept = Departement.objects.create(nom='Production', code='PROD')
-        self.chef = _employe('chef_equipe', role='manager')
+        self.chef = _employe('chef_equipe', role='employe')
         self.membre = _employe('membre_equipe', role='employe', manager=self.chef)
 
     def test_rh_peut_rattacher_manager_et_departement(self):
@@ -291,3 +293,76 @@ class ModifierEmployeTests(TestCase):
         self.client.force_login(self.membre)
         resp = self.client.get(reverse('modifier_employe', args=[self.chef.id]))
         self.assertEqual(resp.status_code, 302)  # redirigé, accès refusé
+
+
+class DeclarationSuperieurTests(TestCase):
+    """Un employé sans manager assigné (typiquement un compte LDAP tout
+    juste auto-créé) doit pouvoir en indiquer un à sa première demande —
+    mais jamais en changer une fois qu'il en a déjà un."""
+
+    def setUp(self):
+        self.type_conge = _type_conge()
+        self.chef = _employe('chef', role='employe')
+        self.autre_chef = _employe('autre_chef', role='employe')
+        self.rh = _employe('rh_verif', role='rh')
+        self.sans_manager = _employe('nouveau_ldap', role='employe')  # manager=None
+
+    def _dates_valides(self):
+        debut = date.today() + timedelta(days=10)
+        while debut.weekday() >= 5:
+            debut += timedelta(days=1)
+        fin = debut + timedelta(days=1)
+        while fin.weekday() >= 5:
+            fin += timedelta(days=1)
+        return debut, fin
+
+    def test_champ_requis_si_pas_de_manager(self):
+        self.client.force_login(self.sans_manager)
+        debut, fin = self._dates_valides()
+        # Pas de "superieur" fourni -> refusé
+        self.client.post(reverse('nouvelle_demande'), {
+            'type_conge': self.type_conge.id,
+            'date_debut': debut.isoformat(), 'date_fin': fin.isoformat(),
+        })
+        self.assertFalse(DemandeConge.objects.filter(employe=self.sans_manager).exists())
+
+    def test_superieur_declare_devient_le_manager_permanent(self):
+        self.client.force_login(self.sans_manager)
+        debut, fin = self._dates_valides()
+        self.client.post(reverse('nouvelle_demande'), {
+            'type_conge': self.type_conge.id,
+            'date_debut': debut.isoformat(), 'date_fin': fin.isoformat(),
+            'superieur': self.chef.id,
+        })
+        self.sans_manager.refresh_from_db()
+        self.assertEqual(self.sans_manager.manager_id, self.chef.id)
+        self.assertTrue(DemandeConge.objects.filter(employe=self.sans_manager).exists())
+        self.assertTrue(
+            HistoriqueModification.objects.filter(
+                employe_concerne=self.sans_manager, type_action='employe_modifie', auteur=self.sans_manager
+            ).exists()
+        )
+        # Le RH est notifié pour pouvoir vérifier/corriger.
+        self.assertTrue(self.rh.notifications.filter(titre__icontains='Supérieur déclaré').exists())
+
+    def test_le_champ_napparait_plus_une_fois_le_manager_fixe(self):
+        self.sans_manager.manager = self.chef
+        self.sans_manager.save()
+        self.client.force_login(self.sans_manager)
+        resp = self.client.get(reverse('nouvelle_demande'))
+        self.assertNotContains(resp, 'name="superieur"')
+
+    def test_impossible_de_changer_de_manager_via_ce_formulaire(self):
+        # Un employé qui a déjà un manager ne peut pas en indiquer un autre
+        # via ce champ — il n'est simplement jamais proposé/pris en compte.
+        self.sans_manager.manager = self.chef
+        self.sans_manager.save()
+        self.client.force_login(self.sans_manager)
+        debut, fin = self._dates_valides()
+        self.client.post(reverse('nouvelle_demande'), {
+            'type_conge': self.type_conge.id,
+            'date_debut': debut.isoformat(), 'date_fin': fin.isoformat(),
+            'superieur': self.autre_chef.id,
+        })
+        self.sans_manager.refresh_from_db()
+        self.assertEqual(self.sans_manager.manager_id, self.chef.id)  # inchangé

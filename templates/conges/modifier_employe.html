@@ -56,7 +56,6 @@
               <label class="form-label">Rôle</label>
               <select name="role" class="form-control">
                 <option value="employe" {% if employe_modifie.role == 'employe' %}selected{% endif %}>Employé</option>
-                <option value="manager" {% if employe_modifie.role == 'manager' %}selected{% endif %}>Manager</option>
                 <option value="rh" {% if employe_modifie.role == 'rh' %}selected{% endif %}>Responsable RH</option>
                 {% if 'dg' in roles_autorises %}
                 <option value="dg" {% if employe_modifie.role == 'dg' %}selected{% endif %}>Directeur Général</option>
@@ -81,16 +80,16 @@
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">Manager direct</label>
+              <label class="form-label">Supérieur direct</label>
               <select name="manager" class="form-control">
                 <option value="">— Aucun —</option>
                 {% for m in managers_possibles %}
                 <option value="{{ m.id }}" {% if m.id == employe_modifie.manager_id %}selected{% endif %}>
-                  {{ m.get_full_name }} ({{ m.get_role_display }})
+                  {{ m.get_full_name }}
                 </option>
                 {% endfor %}
               </select>
-              <small class="form-hint">La liste exclut automatiquement cette personne et son équipe (pour éviter une boucle hiérarchique).</small>
+              <small class="form-hint">N'importe quel employé actif peut être désigné (ce n'est pas un rôle particulier) — la liste exclut automatiquement cette personne et son équipe, pour éviter une boucle hiérarchique.</small>
             </div>
           </div>
           <div class="form-group">
