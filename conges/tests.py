@@ -5,6 +5,7 @@ them, a future refactor could silently reopen the same holes.
 """
 from datetime import date, timedelta
 
+from django.core import mail
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -382,3 +383,90 @@ class DeclarationSuperieurTests(TestCase):
             HistoriqueModification.objects.filter(employe_concerne=self.sans_manager, type_action='employe_modifie').exists()
         )
         self.assertFalse(self.rh.notifications.filter(titre__icontains='Supérieur changé').exists())
+
+
+class EmailNotificationTests(TestCase):
+    """Seuls deux types d'évènements envoient un email (voir
+    conges/email_utils.py) : action requise pour le destinataire, ou
+    décision finale sur sa propre demande. Le reste (RH prévenu dès la
+    soumission, supérieur changé, étapes intermédiaires) reste une
+    notification in-app uniquement — sinon 80 employés inondent vite les
+    boîtes mail de tout le monde à chaque étape de chaque demande."""
+
+    def setUp(self):
+        self.type_conge = _type_conge()
+        self.chef = _employe('chef_mail', role='employe')
+        self.employe = _employe('employe_mail', role='employe', manager=self.chef)
+        self.rh = _employe('rh_mail', role='rh')
+        self.dg = _employe('dg_mail', role='dg')
+        mail.outbox.clear()
+
+    def _dates_valides(self, decalage=10):
+        debut = date.today() + timedelta(days=decalage)
+        while debut.weekday() >= 5:
+            debut += timedelta(days=1)
+        fin = debut + timedelta(days=1)
+        while fin.weekday() >= 5:
+            fin += timedelta(days=1)
+        return debut, fin
+
+    def _soumettre(self):
+        debut, fin = self._dates_valides()
+        self.client.force_login(self.employe)
+        self.client.post(reverse('nouvelle_demande'), {
+            'type_conge': self.type_conge.id,
+            'date_debut': debut.isoformat(), 'date_fin': fin.isoformat(),
+            'superieur': self.chef.id,
+        })
+        return DemandeConge.objects.get(employe=self.employe)
+
+    def test_soumission_notifie_le_superieur_par_mail_pas_le_rh(self):
+        self._soumettre()
+        destinataires = [m.to[0] for m in mail.outbox]
+        self.assertIn(self.chef.email, destinataires)
+        self.assertNotIn(self.rh.email, destinataires)
+
+    def test_validation_par_le_superieur_notifie_le_rh_pas_lemploye(self):
+        demande = self._soumettre()
+        mail.outbox.clear()
+        self.client.force_login(self.chef)
+        self.client.post(reverse('traiter_demande', args=[demande.id]), {'action': 'approuver', 'commentaire': ''})
+        destinataires = [m.to[0] for m in mail.outbox]
+        self.assertIn(self.rh.email, destinataires)
+        self.assertNotIn(self.employe.email, destinataires)  # étape intermédiaire, pas de mail
+
+    def test_validation_par_le_rh_notifie_le_dg(self):
+        demande = self._soumettre()
+        self.client.force_login(self.chef)
+        self.client.post(reverse('traiter_demande', args=[demande.id]), {'action': 'approuver', 'commentaire': ''})
+        mail.outbox.clear()
+        self.client.force_login(self.rh)
+        self.client.post(reverse('traiter_demande', args=[demande.id]), {'action': 'approuver', 'commentaire': ''})
+        destinataires = [m.to[0] for m in mail.outbox]
+        self.assertIn(self.dg.email, destinataires)
+
+    def test_decision_finale_du_dg_notifie_lemploye(self):
+        demande = self._soumettre()
+        self.client.force_login(self.chef)
+        self.client.post(reverse('traiter_demande', args=[demande.id]), {'action': 'approuver', 'commentaire': ''})
+        self.client.force_login(self.rh)
+        self.client.post(reverse('traiter_demande', args=[demande.id]), {'action': 'approuver', 'commentaire': ''})
+        mail.outbox.clear()
+        self.client.force_login(self.dg)
+        self.client.post(reverse('traiter_demande', args=[demande.id]), {'action': 'approuver', 'commentaire': ''})
+        destinataires = [m.to[0] for m in mail.outbox]
+        self.assertIn(self.employe.email, destinataires)
+
+    def test_rejet_notifie_aussi_lemploye_par_mail(self):
+        demande = self._soumettre()
+        mail.outbox.clear()
+        self.client.force_login(self.chef)
+        self.client.post(reverse('traiter_demande', args=[demande.id]), {'action': 'rejeter', 'commentaire': 'Non'})
+        destinataires = [m.to[0] for m in mail.outbox]
+        self.assertIn(self.employe.email, destinataires)
+
+    def test_pas_de_mail_si_le_destinataire_na_pas_dadresse(self):
+        self.chef.email = ''
+        self.chef.save()
+        self._soumettre()
+        self.assertEqual(len(mail.outbox), 0)

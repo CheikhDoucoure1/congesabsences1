@@ -155,6 +155,45 @@ LOGIN_URL = '/connexion/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/connexion/'
 
+# Base URL used to build absolute links inside notification emails (a
+# relative /approbations/12/ means nothing in an inbox). No trailing slash.
+SITE_URL = os.environ.get('DJANGO_SITE_URL', 'http://127.0.0.1:8001').rstrip('/')
+
+# --- Email notifications -----------------------------------------------------
+# Disabled by default — the app works fine without it (in-app notifications
+# still work regardless). Set DJANGO_EMAIL_ENABLED=True once real SMTP
+# credentials are filled in in .env. See conges/email_utils.py for what
+# actually triggers an email (a deliberately small subset of all in-app
+# notifications — only "needs your action" and "final decision on your own
+# request", to avoid flooding inboxes with every intermediate step).
+EMAIL_ENABLED = _env_bool('DJANGO_EMAIL_ENABLED', False)
+
+if EMAIL_ENABLED:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    # Defaults match Office 365 / Exchange Online. That tenant needs
+    # "Authenticated SMTP" explicitly enabled for the sending mailbox
+    # (Microsoft disables it by default) — ask IT, or Exchange admin center
+    # → the mailbox → Manage email apps → Authenticated SMTP.
+    EMAIL_HOST = os.environ.get('DJANGO_EMAIL_HOST', 'smtp.office365.com')
+    EMAIL_PORT = int(os.environ.get('DJANGO_EMAIL_PORT', '587'))
+    EMAIL_USE_TLS = _env_bool('DJANGO_EMAIL_USE_TLS', True)
+    EMAIL_HOST_USER = os.environ.get('DJANGO_EMAIL_HOST_USER', '')
+    EMAIL_HOST_PASSWORD = os.environ.get('DJANGO_EMAIL_HOST_PASSWORD', '')
+    if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
+        raise RuntimeError(
+            "DJANGO_EMAIL_ENABLED is True but DJANGO_EMAIL_HOST_USER/"
+            "DJANGO_EMAIL_HOST_PASSWORD are not set. Fill them in in .env."
+        )
+    DEFAULT_FROM_EMAIL = os.environ.get('DJANGO_EMAIL_FROM') or EMAIL_HOST_USER
+elif DEBUG:
+    # Prints emails to the console instead of sending them — lets you see
+    # what would go out while developing, with no SMTP setup needed.
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+else:
+    # Silently discards — safe no-op for a production instance that hasn't
+    # been given SMTP credentials yet.
+    EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+
 # --- Hardening --------------------------------------------------------------
 # Reasonable per-request upload ceiling (also enforced per-field in
 # conges/validators.py for avatars/justificatifs specifically).

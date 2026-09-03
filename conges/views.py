@@ -22,6 +22,7 @@ from .validators import (
     EXTENSIONS_JUSTIFICATIF, EXTENSIONS_AVATAR, EXTENSIONS_IMPORT_EXCEL,
     TAILLE_MAX_JUSTIFICATIF, TAILLE_MAX_AVATAR, TAILLE_MAX_IMPORT_EXCEL,
 )
+from .email_utils import envoyer_email_notification
 
 logger = logging.getLogger(__name__)
 
@@ -343,13 +344,15 @@ def nouvelle_demande(request):
 def _notifier_manager(demande):
     employe = demande.employe
     if employe.manager:
-        Notification.objects.create(
-            destinataire=employe.manager,
-            titre=f"Nouvelle demande de congé",
-            message=f"{employe.get_full_name()} a soumis une demande de {demande.type_conge.libelle} "
-                    f"du {demande.date_debut.strftime('%d/%m/%Y')} au {demande.date_fin.strftime('%d/%m/%Y')}.",
-            lien=f"/approbations/{demande.id}/",
+        titre = "Nouvelle demande de congé"
+        message = (
+            f"{employe.get_full_name()} a soumis une demande de {demande.type_conge.libelle} "
+            f"du {demande.date_debut.strftime('%d/%m/%Y')} au {demande.date_fin.strftime('%d/%m/%Y')}."
         )
+        lien = f"/approbations/{demande.id}/"
+        Notification.objects.create(destinataire=employe.manager, titre=titre, message=message, lien=lien)
+        # Needs their action — one of the two kinds of events that also go by email.
+        envoyer_email_notification(employe.manager, titre, message, lien)
     for rh in Employe.objects.filter(role__in=['rh', 'admin'], actif=True):
         Notification.objects.create(
             destinataire=rh,
@@ -361,28 +364,30 @@ def _notifier_manager(demande):
 
 
 def _notifier_rh(demande):
+    titre = "Demande en attente de votre validation"
+    lien = f"/approbations/{demande.id}/"
     for rh in Employe.objects.filter(role__in=['rh', 'admin'], actif=True):
-        Notification.objects.create(
-            destinataire=rh,
-            titre="Demande en attente de votre validation",
-            message=f"Demande {demande.reference} de {demande.employe.get_full_name()} "
-                    f"({demande.type_conge.libelle}, {demande.nombre_jours} jour(s)) "
-                    f"a été validée par {demande.valide_par.get_full_name()} et attend votre validation.",
-            lien=f"/approbations/{demande.id}/",
+        message = (
+            f"Demande {demande.reference} de {demande.employe.get_full_name()} "
+            f"({demande.type_conge.libelle}, {demande.nombre_jours} jour(s)) "
+            f"a été validée par {demande.valide_par.get_full_name()} et attend votre validation."
         )
+        Notification.objects.create(destinataire=rh, titre=titre, message=message, lien=lien)
+        envoyer_email_notification(rh, titre, message, lien)  # needs their action
 
 
 def _notifier_dg(demande):
     validateur = demande.valide_par_rh or demande.valide_par
+    titre = "Demande en attente de votre validation"
+    lien = f"/approbations/{demande.id}/"
     for dg in Employe.objects.filter(role='dg', actif=True):
-        Notification.objects.create(
-            destinataire=dg,
-            titre="Demande en attente de votre validation",
-            message=f"Demande {demande.reference} de {demande.employe.get_full_name()} "
-                    f"({demande.type_conge.libelle}, {demande.nombre_jours} jour(s)) "
-                    f"a été validée par {validateur.get_full_name()} et attend votre validation finale.",
-            lien=f"/approbations/{demande.id}/",
+        message = (
+            f"Demande {demande.reference} de {demande.employe.get_full_name()} "
+            f"({demande.type_conge.libelle}, {demande.nombre_jours} jour(s)) "
+            f"a été validée par {validateur.get_full_name()} et attend votre validation finale."
         )
+        Notification.objects.create(destinataire=dg, titre=titre, message=message, lien=lien)
+        envoyer_email_notification(dg, titre, message, lien)  # needs their action
 
 
 @login_required
@@ -830,21 +835,23 @@ def _mettre_a_jour_solde(demande):
 
 def _notifier_employe(demande, statut, commentaire):
     labels = {
-        'validee_manager': "validée par votre manager, en attente de la validation du RH",
+        'validee_manager': "validée par votre supérieur, en attente de la validation du RH",
         'validee': "validée par le RH, en attente de la validation finale du DG",
         'approuve': "définitivement approuvée",
         'rejete': "rejetée",
     }
     statut_label = labels.get(statut, statut)
+    titre = f"Demande {statut_label}"
     msg = f"Votre demande {demande.reference} ({demande.type_conge.libelle}) a été {statut_label}."
     if commentaire:
         msg += f" Commentaire : {commentaire}"
-    Notification.objects.create(
-        destinataire=demande.employe,
-        titre=f"Demande {statut_label}",
-        message=msg,
-        lien=f"/mes-demandes/",
-    )
+    lien = "/mes-demandes/"
+    Notification.objects.create(destinataire=demande.employe, titre=titre, message=msg, lien=lien)
+    if statut in ('approuve', 'rejete'):
+        # Final decision on their own request — the other kind of event
+        # that also goes by email. The intermediate progress updates
+        # (validee_manager/validee) stay in-app only.
+        envoyer_email_notification(demande.employe, titre, msg, lien)
 
 
 @login_required
