@@ -21,6 +21,9 @@ media/
 # Static files collected
 staticfiles/
 
+# File-based cache backend (login throttle, etc.)
+django_cache/
+
 # Environment variables
 .env
 .env.local

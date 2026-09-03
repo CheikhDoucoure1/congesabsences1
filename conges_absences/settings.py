@@ -97,6 +97,20 @@ DATABASES = {
     }
 }
 
+# File-based, not Django's default in-memory cache: the login throttle
+# (see conges.views.connexion) reads/writes this cache, and an in-memory
+# one is private to a single process — with Gunicorn running several
+# worker processes, each would keep its own separate attempt counter,
+# so the throttle would trigger inconsistently depending on which worker
+# handles a given request. A shared file store fixes that with no extra
+# service (Redis/Memcached) to install or run.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+        'LOCATION': str(BASE_DIR / 'django_cache'),
+    }
+}
+
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 8}},
