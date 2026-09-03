@@ -186,7 +186,15 @@ if AUTH_LDAP_ENABLED:
     AUTH_LDAP_SERVER_URI = os.environ.get(
         'DJANGO_LDAP_SERVER_URI', 'ldap://PETROSEN-SRV-DC1.PETROSEN.SN:389'
     )
-    AUTH_LDAP_BIND_DN = os.environ.get('DJANGO_LDAP_BIND_DN', r'PETROSEN\adminclb')
+    # Use the UPN form (user@domain), not DOMAIN\user — the backslash form
+    # gets silently corrupted when systemd's EnvironmentFile= loads .env
+    # (it applies C-style backslash escaping, so \a becomes a control
+    # character instead of staying literal). Confirmed the hard way: this
+    # cost real debugging time before someone thought to check the actual
+    # process environment (/proc/<pid>/environ) rather than the .env file
+    # or a manually-run shell, which don't go through systemd's parser and
+    # so don't show the corruption.
+    AUTH_LDAP_BIND_DN = os.environ.get('DJANGO_LDAP_BIND_DN', 'adminclb@petrosen.sn')
     AUTH_LDAP_BIND_PASSWORD = os.environ.get('DJANGO_LDAP_BIND_PASSWORD', '')
     if not AUTH_LDAP_BIND_PASSWORD:
         raise RuntimeError(

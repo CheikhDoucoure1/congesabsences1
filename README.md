@@ -319,9 +319,24 @@ détail des variables), dans `.env` :
 DJANGO_LDAP_ENABLED=True
 DJANGO_LDAP_SERVER_URI=ldap://PETROSEN-SRV-DC1.PETROSEN.SN:389
 DJANGO_LDAP_BASE_DN=DC=PETROSEN,DC=SN
-DJANGO_LDAP_BIND_DN=PETROSEN\adminclb
+DJANGO_LDAP_BIND_DN=adminclb@petrosen.sn
 DJANGO_LDAP_BIND_PASSWORD=<mot-de-passe-reel-du-compte-de-service>
 ```
+
+⚠️ **`DJANGO_LDAP_BIND_DN` : toujours la forme `utilisateur@domaine`, jamais
+`DOMAINE\utilisateur`.** Ça nous a coûté plusieurs jours de diagnostic en
+production : le service systemd charge `.env` via `EnvironmentFile=`, qui
+applique un échappement façon C aux valeurs — `\a` y devient un caractère
+de contrôle invisible au lieu de rester un antislash littéral. Résultat :
+`PETROSEN\adminclb` devenait silencieusement `PETROSENadminclb` (avec un
+caractère invisible au milieu) au démarrage réel du service, alors que la
+même valeur semblait parfaitement correcte partout où on la vérifiait — le
+fichier `.env` lui-même, ou un `manage.py shell` lancé à la main (ce
+dernier ne passe pas par `EnvironmentFile=`, donc ne montre jamais le
+problème). La seule façon de le voir était d'inspecter l'environnement du
+processus Gunicorn réellement en cours : `cat /proc/<pid du worker>/environ
+| tr '\0' '\n' | grep DJANGO_LDAP`. La forme `utilisateur@domaine` évite
+le problème puisqu'elle ne contient aucun caractère à échapper.
 
 ⚠️ **LDAP en clair, pas LDAPS.** Le contrôleur de domaine `PETROSEN-SRV-DC1`
 n'expose pas le port 636 (confirmé après plusieurs tests réseau et
@@ -389,7 +404,7 @@ protocole que `DJANGO_LDAP_SERVER_URI` dans votre `.env`**, pas un autre :
 ```bash
 sudo apt install -y ldap-utils   # ldapsearch — outil de diagnostic uniquement
 ldapsearch -H ldap://PETROSEN-SRV-DC1.PETROSEN.SN:389 \
-  -D 'PETROSEN\adminclb' -W \
+  -D 'adminclb@petrosen.sn' -W \
   -b 'DC=PETROSEN,DC=SN' \
   '(sAMAccountName=<login-dun-vrai-compte-de-test>)'
 ```
@@ -401,7 +416,25 @@ ses attributs (`givenName`, `sn`, `mail`...), le service AD et le compte de
 service fonctionnent — un souci restant serait forcément côté configuration
 Django.
 
-**4. Django lui-même, avec les logs détaillés.** Activez temporairement le
+**4. Ce que le service réellement en cours utilise — pas ce que le fichier
+`.env` ou un `manage.py shell` manuel montrent.** Un `.env` qui a l'air
+correct, ou un test via `manage.py shell` lancé à la main, peuvent tous les
+deux mentir : ni l'un ni l'autre ne passe par `EnvironmentFile=` de
+systemd, qui applique un échappement façon C aux valeurs (voir
+l'avertissement plus haut sur `DJANGO_LDAP_BIND_DN`). Seule l'inspection
+du processus Gunicorn réellement démarré révèle une éventuelle
+corruption :
+
+```bash
+sudo cat /proc/$(pgrep -f "gunicorn.*conges_absences.wsgi" | head -1)/environ | tr '\0' '\n' | grep DJANGO_LDAP
+```
+
+Comparez chaque valeur affichée à ce qu'il y a dans `.env`. Toute
+différence (caractère manquant, invisible, ou différent) confirme une
+corruption au chargement — évitez les antislashs dans les valeurs de
+`.env` en général, pas seulement pour `DJANGO_LDAP_BIND_DN`.
+
+**5. Django lui-même, avec les logs détaillés.** Activez temporairement le
 log verbeux (voir `.env.example`) :
 
 ```ini
@@ -435,7 +468,7 @@ attributs) — c'est ici que vous verrez la raison précise d'un échec silencie
 mode debug, les tentatives de connexion sont journalisées en détail, ce
 qu'on ne veut pas laisser tourner en continu en production.
 
-**5. Bout en bout.** Connectez-vous avec un vrai compte AD depuis la page
+**6. Bout en bout.** Connectez-vous avec un vrai compte AD depuis la page
 de connexion de l'application, puis vérifiez dans `/administration/` que
 le compte est bien apparu (voir l'échange précédent : il est créé
 automatiquement au premier login réussi, avec le rôle par défaut — à
