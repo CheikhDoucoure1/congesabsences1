@@ -42,8 +42,19 @@ if not SECRET_KEY:
             "DEBUG=False."
         )
 
-_allowed_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS', '127.0.0.1,localhost')
+_allowed_hosts = os.environ.get(
+    'DJANGO_ALLOWED_HOSTS',
+    '127.0.0.1,localhost,conges-absences.petrosen.sn',
+)
 ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts.split(',') if h.strip()]
+
+_csrf_trusted_origins = os.environ.get(
+    'DJANGO_CSRF_TRUSTED_ORIGINS',
+    'https://conges-absences.petrosen.sn',
+)
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip() for origin in _csrf_trusted_origins.split(',') if origin.strip()
+]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -213,7 +224,7 @@ if AUTH_LDAP_ENABLED:
     # in sync with the `mail` attribute specifically.
     AUTH_LDAP_USER_SEARCH = LDAPSearch(
         _ldap_base_dn, ldap.SCOPE_SUBTREE,
-        '(|(sAMAccountName=%(user)s)(userPrincipalName=%(user)s))',
+        '(|(sAMAccountName=%(user)s)(userPrincipalName=%(user)s)(mail=%(user)s))',
     )
 
     # AD attributes -> Employe fields, refreshed on every successful login
