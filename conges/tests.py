@@ -4,12 +4,14 @@ These pin down the behaviours found during the security review: without
 them, a future refactor could silently reopen the same holes.
 """
 from datetime import date, timedelta
+from unittest.mock import patch
 
 from django.core import mail
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.core.management import call_command
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .models import Departement, DemandeConge, Employe, HistoriqueModification, SoldeConge, TypeConge
@@ -473,3 +475,88 @@ class EmailNotificationTests(TestCase):
         self.chef.save()
         self._soumettre()
         self.assertEqual(len(mail.outbox), 0)
+
+
+_LDAP_SETTINGS_TEST = dict(
+    AUTH_LDAP_ENABLED=True,
+    AUTH_LDAP_SERVER_URI='ldap://dc-test.example.com:389',
+    AUTH_LDAP_BASE_DN='DC=EXAMPLE,DC=COM',
+    AUTH_LDAP_BIND_DN='svc@example.com',
+    AUTH_LDAP_BIND_PASSWORD='x',
+    AUTH_LDAP_START_TLS=False,
+    AUTH_LDAP_USER_ATTR_MAP={'first_name': 'givenName', 'last_name': 'sn', 'email': 'mail'},
+)
+
+
+def _entree_ad(username, prenom, nom, email):
+    """Simule une entrée LDAP telle que python-ldap la renvoie : valeurs en
+    bytes, une liste par attribut."""
+    return (
+        f'CN={prenom} {nom},OU=Users,DC=EXAMPLE,DC=COM',
+        {
+            'sAMAccountName': [username.encode('utf-8')],
+            'givenName': [prenom.encode('utf-8')],
+            'sn': [nom.encode('utf-8')],
+            'mail': [email.encode('utf-8')],
+        },
+    )
+
+
+@override_settings(**_LDAP_SETTINGS_TEST)
+class SyncLdapEmployesTests(TestCase):
+    """La commande de synchronisation ne doit jamais toucher au rôle, au
+    manager ni au statut actif d'un compte déjà existant — seulement
+    créer les nouveaux (mot de passe local inutilisable, comme un vrai
+    login LDAP) et rafraîchir nom/email des comptes déjà connus."""
+
+    @patch('conges.management.commands.sync_ldap_employes._connexion_ldap')
+    @patch('conges.management.commands.sync_ldap_employes.rechercher_utilisateurs_ad')
+    def test_cree_un_compte_coquille_pour_un_nouvel_utilisateur_ad(self, mock_recherche, mock_connexion):
+        mock_connexion.return_value.unbind_s.return_value = None
+        mock_recherche.return_value = [
+            _entree_ad('j.nouveau', 'Jean', 'Nouveau', 'j.nouveau@example.com'),
+        ]
+        call_command('sync_ldap_employes')
+
+        emp = Employe.objects.get(username='j.nouveau')
+        self.assertEqual(emp.email, 'j.nouveau@example.com')
+        self.assertEqual(emp.first_name, 'Jean')
+        self.assertFalse(emp.has_usable_password())  # comme un vrai login LDAP
+        self.assertEqual(emp.role, 'employe')  # défaut du modèle
+        self.assertTrue(emp.actif)
+
+    @patch('conges.management.commands.sync_ldap_employes._connexion_ldap')
+    @patch('conges.management.commands.sync_ldap_employes.rechercher_utilisateurs_ad')
+    def test_ne_touche_pas_role_manager_actif_dun_compte_existant(self, mock_recherche, mock_connexion):
+        mock_connexion.return_value.unbind_s.return_value = None
+        chef = _employe('chef_sync', role='rh')
+        existant = _employe('e.existant', role='rh', manager=chef)
+        existant.actif = False
+        existant.first_name = 'AncienPrenom'
+        existant.save()
+
+        mock_recherche.return_value = [
+            _entree_ad('e.existant', 'NouveauPrenom', 'Existant', 'e.existant@petrosen.sn'),
+        ]
+        call_command('sync_ldap_employes')
+
+        existant.refresh_from_db()
+        self.assertEqual(existant.first_name, 'NouveauPrenom')  # rafraîchi
+        self.assertEqual(existant.role, 'rh')  # jamais touché
+        self.assertEqual(existant.manager_id, chef.id)  # jamais touché
+        self.assertFalse(existant.actif)  # jamais touché — RH garde la main
+
+    @patch('conges.management.commands.sync_ldap_employes._connexion_ldap')
+    @patch('conges.management.commands.sync_ldap_employes.rechercher_utilisateurs_ad')
+    def test_ignore_une_entree_sans_email(self, mock_recherche, mock_connexion):
+        mock_connexion.return_value.unbind_s.return_value = None
+        mock_recherche.return_value = [
+            ('CN=Sans Email,DC=EXAMPLE,DC=COM', {'sAMAccountName': [b'sans.email'], 'givenName': [b'Sans']}),
+        ]
+        call_command('sync_ldap_employes')
+        self.assertFalse(Employe.objects.filter(username='sans.email').exists())
+
+    def test_erreur_claire_si_ldap_desactive(self):
+        with override_settings(AUTH_LDAP_ENABLED=False):
+            with self.assertRaises(Exception):
+                call_command('sync_ldap_employes')

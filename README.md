@@ -474,6 +474,38 @@ le compte est bien apparu (voir l'échange précédent : il est créé
 automatiquement au premier login réussi, avec le rôle par défaut — à
 compléter ensuite via l'écran "Modifier l'employé").
 
+### Faire apparaître tout l'annuaire, pas seulement ceux qui se sont déjà connectés
+
+Sans rien de plus, un employé n'apparaît dans l'app (donc dans la barre de
+recherche "supérieur direct", ou dans `/administration/`) qu'**après** sa
+toute première connexion — le reste de l'annuaire AD est invisible pour
+l'app tant que personne ne s'est connecté avec ce compte.
+
+`sync_ldap_employes` comble ça : elle crée un compte "coquille" (sans mot
+de passe local utilisable, exactement comme un vrai login LDAP) pour
+chaque utilisateur actif de l'annuaire, sans attendre qu'il se connecte.
+Quand cette personne se connecte réellement plus tard, LDAP retrouve ce
+même compte (par son identifiant) et l'adopte — aucun doublon, et toute
+notification déjà envoyée (par exemple parce qu'un collègue l'a choisie
+comme supérieur avant même sa première connexion) l'attend déjà.
+
+```bash
+sudo -u deploy -H bash -c '
+  cd /opt/conges-absences && source .venv/bin/activate
+  python manage.py sync_ldap_employes
+'
+```
+
+Ne touche jamais au rôle, au manager ni au statut actif d'un compte déjà
+existant — seulement son nom/email, tenus à jour. Sûr à relancer autant
+de fois que voulu. À planifier en tâche régulière (`crontab -e` pour
+l'utilisateur `deploy`) pour suivre les nouvelles embauches sans action
+manuelle :
+
+```cron
+0 3 * * * cd /opt/conges-absences && /opt/conges-absences/.venv/bin/python manage.py sync_ldap_employes >> /opt/conges-absences/sync_ldap.log 2>&1
+```
+
 ## 13. Sauvegardes
 
 Deux choses à sauvegarder régulièrement : la base **PostgreSQL** et le

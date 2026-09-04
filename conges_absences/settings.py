@@ -252,7 +252,12 @@ if AUTH_LDAP_ENABLED:
             "set. Fill it in in .env (never commit it)."
         )
 
-    _ldap_base_dn = os.environ.get('DJANGO_LDAP_BASE_DN', 'DC=PETROSEN,DC=SN')
+    # Exposed as a real setting (not just a local var feeding
+    # AUTH_LDAP_USER_SEARCH below) so other code — conges/management/
+    # commands/sync_ldap_employes.py — can reuse the same base DN for its
+    # own standalone directory search.
+    AUTH_LDAP_BASE_DN = os.environ.get('DJANGO_LDAP_BASE_DN', 'DC=PETROSEN,DC=SN')
+    _ldap_base_dn = AUTH_LDAP_BASE_DN
     # Subtree search from the domain root: the employees are spread across
     # several OUs under this base, so this recurses into all of them rather
     # than requiring one fixed OU. Matches on either the AD login
