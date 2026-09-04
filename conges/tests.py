@@ -354,7 +354,10 @@ class DeclarationSuperieurTests(TestCase):
         self.client.force_login(self.sans_manager)
         resp = self.client.get(reverse('nouvelle_demande'))
         self.assertContains(resp, 'name="superieur"')
-        self.assertContains(resp, f'value="{self.chef.id}" selected')
+        # Champ de recherche : texte visible pré-rempli avec le nom, valeur
+        # réelle (l'id) dans le input hidden qui porte name="superieur".
+        self.assertContains(resp, f'value="{self.chef.get_full_name()}"')
+        self.assertContains(resp, f'id="superieurId" value="{self.chef.id}"')
 
     def test_peut_changer_de_superieur_a_chaque_demande(self):
         self.sans_manager.manager = self.chef

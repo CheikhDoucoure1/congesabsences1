@@ -335,6 +335,7 @@ def nouvelle_demande(request):
         'soldes_json': soldes_json,
         'employes_liste': employes_liste,
         'superieurs_possibles': superieurs_possibles,
+        'superieurs_json': [{'id': s.id, 'nom': s.get_full_name()} for s in superieurs_possibles],
         'today': date.today().isoformat(),
         'notifications_non_lues': user.notifications.filter(lue=False).count(),
     }

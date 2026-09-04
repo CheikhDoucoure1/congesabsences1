@@ -2,6 +2,24 @@
 {% block title %}Nouvelle demande{% endblock %}
 {% block page_title %}Nouvelle demande de congé{% endblock %}
 
+{% block extra_css %}
+<style>
+.autocomplete { position: relative; }
+.autocomplete-list {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 260px; overflow-y: auto;
+  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15,23,42,.12);
+  z-index: 50;
+}
+.autocomplete-item {
+  padding: .6rem .9rem; cursor: pointer; font-size: .9rem; color: var(--gray-800);
+}
+.autocomplete-item:hover, .autocomplete-item.active { background: var(--primary-light); color: var(--primary-dark); }
+.autocomplete-empty { padding: .6rem .9rem; font-size: .85rem; color: var(--gray-500); }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="form-page">
   <div class="form-page-inner">
@@ -36,12 +54,13 @@
           <div class="card-body">
             <div class="form-group">
               <label class="form-label required">Qui doit approuver cette demande ?</label>
-              <select name="superieur" id="superieurSelect" class="form-control" required>
-                <option value="">— Sélectionner —</option>
-                {% for s in superieurs_possibles %}
-                <option value="{{ s.id }}" {% if s.id == request.user.manager_id %}selected{% endif %}>{{ s.get_full_name }}</option>
-                {% endfor %}
-              </select>
+              <div class="autocomplete" id="superieurAutocomplete">
+                <input type="text" id="superieurSearch" class="form-control" autocomplete="off"
+                       placeholder="Tapez un nom..."
+                       value="{% if request.user.manager %}{{ request.user.manager.get_full_name }}{% endif %}">
+                <input type="hidden" name="superieur" id="superieurId" value="{{ request.user.manager_id|default:'' }}">
+                <div class="autocomplete-list hidden" id="superieurList"></div>
+              </div>
               <small class="form-hint">
                 Confirmez ou changez votre supérieur direct — c'est lui qui recevra la notification et devra approuver.
               </small>
@@ -253,10 +272,107 @@
 
 {% block extra_js %}
 {{ soldes_json|json_script:"soldes-data" }}
+{{ superieurs_json|json_script:"superieurs-data" }}
 <script>
 const today = '{{ today }}';
 const SOLDES = JSON.parse(document.getElementById('soldes-data').textContent);
+const SUPERIEURS = JSON.parse(document.getElementById('superieurs-data').textContent);
 let currentStep = 1;
+
+// --- Barre de recherche du supérieur direct -------------------------------
+(function() {
+  const input = document.getElementById('superieurSearch');
+  const hiddenId = document.getElementById('superieurId');
+  const list = document.getElementById('superieurList');
+  let activeIndex = -1;
+
+  function normaliser(txt) {
+    // Strips accents for a match that ignores é/è/ê/à/etc. Built from
+    // character codes (not a literal escape in the source) so the
+    // "combining diacritical marks" range (0x0300-0x036f, what NFD
+    // normalization splits accented letters into) survives any encoding
+    // step intact.
+    const debut = String.fromCharCode(768);   // 0x0300
+    const fin = String.fromCharCode(879);     // 0x036f
+    const regexAccents = new RegExp('[' + debut + '-' + fin + ']', 'g');
+    return txt.normalize('NFD').replace(regexAccents, '').toLowerCase();
+  }
+
+  function fermer() {
+    list.classList.add('hidden');
+    list.innerHTML = '';
+    activeIndex = -1;
+  }
+
+  function choisir(personne) {
+    input.value = personne.nom;
+    hiddenId.value = personne.id;
+    fermer();
+  }
+
+  function afficherResultats() {
+    const requete = normaliser(input.value.trim());
+    // Si le texte tapé correspond déjà exactement au choix en cours, ne
+    // pas invalider la sélection tant qu'on n'a pas retapé quelque chose
+    // de différent.
+    const resultats = requete
+      ? SUPERIEURS.filter(function(p) { return normaliser(p.nom).includes(requete); })
+      : SUPERIEURS;
+
+    list.innerHTML = '';
+    if (resultats.length === 0) {
+      const vide = document.createElement('div');
+      vide.className = 'autocomplete-empty';
+      vide.textContent = 'Aucun résultat.';
+      list.appendChild(vide);
+    } else {
+      resultats.slice(0, 30).forEach(function(personne) {
+        const item = document.createElement('div');
+        item.className = 'autocomplete-item';
+        item.textContent = personne.nom;
+        item.addEventListener('mousedown', function(e) {
+          e.preventDefault();  // évite que le blur ferme la liste avant le clic
+          choisir(personne);
+        });
+        list.appendChild(item);
+      });
+    }
+    activeIndex = -1;
+    list.classList.remove('hidden');
+  }
+
+  input.addEventListener('input', function() {
+    hiddenId.value = '';  // toute frappe invalide la sélection précédente
+    afficherResultats();
+  });
+  input.addEventListener('focus', afficherResultats);
+  input.addEventListener('blur', function() {
+    setTimeout(function() {
+      fermer();
+      // Si ce qui reste tapé ne correspond à personne, on vide le champ
+      // plutôt que de laisser croire qu'un choix est fait.
+      if (!hiddenId.value) input.value = '';
+    }, 100);
+  });
+  input.addEventListener('keydown', function(e) {
+    const items = list.querySelectorAll('.autocomplete-item');
+    if (!items.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeIndex = Math.min(activeIndex + 1, items.length - 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeIndex = Math.max(activeIndex - 1, 0);
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault();
+      items[activeIndex].dispatchEvent(new Event('mousedown'));
+      return;
+    } else {
+      return;
+    }
+    items.forEach(function(it, i) { it.classList.toggle('active', i === activeIndex); });
+  });
+})();
 
 // Show remaining balance on each type card
 document.querySelectorAll('.type-radio').forEach(function(radio) {
@@ -287,10 +403,10 @@ function goToStep(step) {
 }
 
 function validateStep1() {
-  const superieurSelect = document.getElementById('superieurSelect');
-  if (!superieurSelect.value) {
+  const superieurId = document.getElementById('superieurId');
+  if (!superieurId.value) {
     document.getElementById('superieur-error').classList.remove('hidden');
-    superieurSelect.focus();
+    document.getElementById('superieurSearch').focus();
     return false;
   }
   document.getElementById('superieur-error').classList.add('hidden');
@@ -341,8 +457,8 @@ function fillRecap() {
   const interimNom = interimaireSelect.value ? interimaireSelect.options[interimaireSelect.selectedIndex].text : '—';
   const isAbsence = typeEl && typeEl.dataset.categorie === 'absence';
 
-  const superieurSelect = document.getElementById('superieurSelect');
-  const superieurNom = superieurSelect.value ? superieurSelect.options[superieurSelect.selectedIndex].text : '—';
+  const superieurId = document.getElementById('superieurId').value;
+  const superieurNom = superieurId ? document.getElementById('superieurSearch').value : '—';
 
   document.getElementById('recapType').textContent = typeName;
   document.getElementById('recapDebut').textContent = debut ? formatDateFr(debut) : '—';
